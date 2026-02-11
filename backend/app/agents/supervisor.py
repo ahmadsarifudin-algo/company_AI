@@ -5,14 +5,15 @@ Two-level hierarchy:
 1. GlobalSupervisor: Routes tasks to the correct department
 2. DepartmentSupervisor: Selects and runs the best agent within a department
 
-Uses LangGraph StateGraph with MemorySaver checkpointer for persistence
-and human-in-the-loop approval flows.
+Includes a RAG context retrieval node that injects relevant knowledge
+before agent execution. Uses LangGraph StateGraph with MemorySaver
+checkpointer for persistence and human-in-the-loop approval flows.
 """
 
 from typing import Any, Literal
 
 import structlog
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph
 
@@ -89,6 +90,37 @@ def department_supervisor(state: AgentState) -> AgentState:
         )
     ]
     state["status"] = "running"
+    return state
+
+
+def retrieve_context(state: AgentState) -> AgentState:
+    """RAG context retrieval node: queries knowledge base for relevant context.
+
+    Runs between department_supervisor and agent_executor. Injects
+    relevant knowledge documents as a SystemMessage so the agent
+    has domain context before processing.
+
+    NOTE: This is a synchronous wrapper. The actual async retrieval
+    happens in AgentExecutorService which can inject context directly.
+    This node acts as a placeholder for the graph structure and can
+    be enhanced when the full async pipeline is integrated.
+    """
+    department = state["department"]
+    task = state.get("current_task", "")
+
+    logger.info(
+        "retrieve_context",
+        department=department,
+        task=task[:100],
+    )
+
+    # Context injection message (actual RAG retrieval is done
+    # by AgentExecutorService before graph invocation)
+    state["messages"] = [
+        SystemMessage(
+            content=f"[KnowledgeBase] Context retrieval prepared for department '{department}'."
+        )
+    ]
     return state
 
 
@@ -193,8 +225,8 @@ def build_global_graph(checkpointer: Any | None = None) -> StateGraph:
     """Build the full agent execution graph.
 
     Graph flow:
-        route_to_department → department_supervisor → agent_executor
-        → [check_approval?] → finalize → END
+        route_to_department → department_supervisor → retrieve_context
+        → agent_executor → [check_approval?] → finalize → END
 
     Args:
         checkpointer: LangGraph checkpointer for persistence.
@@ -211,6 +243,7 @@ def build_global_graph(checkpointer: Any | None = None) -> StateGraph:
     # Add nodes
     graph.add_node("route_to_department", route_to_department)
     graph.add_node("department_supervisor", department_supervisor)
+    graph.add_node("retrieve_context", retrieve_context)
     graph.add_node("agent_executor", agent_executor_node)
     graph.add_node("check_approval", check_approval)
     graph.add_node("finalize", finalize)
@@ -227,7 +260,8 @@ def build_global_graph(checkpointer: Any | None = None) -> StateGraph:
             "finalize": "finalize",
         },
     )
-    graph.add_edge("department_supervisor", "agent_executor")
+    graph.add_edge("department_supervisor", "retrieve_context")
+    graph.add_edge("retrieve_context", "agent_executor")
     graph.add_conditional_edges(
         "agent_executor",
         should_check_approval,

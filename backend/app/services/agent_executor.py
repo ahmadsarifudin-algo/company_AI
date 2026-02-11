@@ -4,15 +4,19 @@ Agent Executor Service — Bridge between API requests and LangGraph execution.
 Handles:
 - Loading agent config from DB
 - Building the LangGraph execution graph
+- RAG context injection from knowledge base
+- Session memory for chat continuity
 - Dispatching execution (sync or async via Celery)
 - Updating task status in DB
 - Collecting results and audit logging
+- Long-term memory save for key decisions
 """
 
 import time
 from typing import Any
 
 import structlog
+from langchain_core.messages import SystemMessage
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,6 +25,8 @@ from app.core.config import get_settings
 from app.models.agent import Agent
 from app.models.task import Task
 from app.services.audit_service import AuditService
+from app.services.knowledge_service import KnowledgeService
+from app.services.memory_service import MemoryService
 
 logger = structlog.get_logger()
 settings = get_settings()
@@ -32,6 +38,8 @@ class AgentExecutorService:
     def __init__(self, db: AsyncSession):
         self.db = db
         self.audit = AuditService(db)
+        self.knowledge = KnowledgeService(db)
+        self.memory = MemoryService(knowledge_service=self.knowledge)
 
     async def execute_task(
         self,
@@ -97,6 +105,20 @@ class AgentExecutorService:
             max_tokens=settings.AGENT_MAX_TOKENS,
         )
 
+        # 3.5 Inject RAG context from knowledge base
+        try:
+            rag_context = await self.knowledge.get_context_for_task(
+                task_description=input_text or task.description or task.title,
+                department=task.department,
+            )
+            if rag_context:
+                initial_state["messages"].append(
+                    SystemMessage(content=rag_context)
+                )
+                logger.info("rag_context_injected", task_id=task_id, chars=len(rag_context))
+        except Exception as e:
+            logger.warning("rag_context_failed", task_id=task_id, error=str(e))
+
         # 4. Run graph
         try:
             config = {"configurable": {"thread_id": task_id}}
@@ -117,6 +139,20 @@ class AgentExecutorService:
                 execution_time_ms=elapsed_ms,
                 cost_estimate=self._estimate_cost(final_state.get("token_usage", 0), agent.tier),
             )
+
+            # 7. Save long-term memory for completed tasks
+            if task.status == "completed":
+                result_summary = final_state.get("result", {})
+                if isinstance(result_summary, dict):
+                    try:
+                        await self.memory.save_long_term_memory(
+                            agent_name=agent.name,
+                            department=task.department,
+                            content=f"Task: {task.title}\nResult: {result_summary}",
+                            title=f"Completed: {task.title[:100]}",
+                        )
+                    except Exception as mem_err:
+                        logger.warning("long_term_memory_failed", error=str(mem_err))
 
             return {
                 "task_id": task_id,
@@ -188,6 +224,9 @@ class AgentExecutorService:
         )
 
         try:
+            # Load session memory for chat continuity
+            previous_messages = await self.memory.load_session(thread)
+
             config = {"configurable": {"thread_id": thread}}
             final_state = await graph.ainvoke(state, config=config)
 
@@ -204,6 +243,13 @@ class AgentExecutorService:
                 action_type="chat",
                 details=f"Chat message: {message[:100]}...",
             )
+
+            # Save session for continuity
+            session_messages = previous_messages + [
+                {"role": "user", "content": message},
+                {"role": "assistant", "content": response_text},
+            ]
+            await self.memory.save_session(thread, session_messages)
 
             return {
                 "agent_id": agent.id,

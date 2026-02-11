@@ -49,6 +49,16 @@ class Settings(BaseSettings):
     AGENT_MAX_EXECUTION_TIME: int = 600  # seconds (10 minutes)
     AGENT_LOOP_DETECTION_THRESHOLD: int = 5
 
+    # ── Knowledge & RAG ──────────────────────
+    EMBEDDING_MODEL: str = "text-embedding-3-small"
+    EMBEDDING_DIMENSIONS: int = 1536
+    CHUNK_SIZE: int = 500       # target tokens per chunk
+    CHUNK_OVERLAP: int = 50     # token overlap between chunks
+    RAG_TOP_K: int = 5          # default retrieval count
+
+    # ── Agent Memory ─────────────────────────
+    MEMORY_TTL: int = 86400     # Redis session TTL in seconds (24h)
+
     @property
     def allowed_origins_list(self) -> list[str]:
         return [origin.strip() for origin in self.ALLOWED_ORIGINS.split(",")]
