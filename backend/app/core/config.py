@@ -1,0 +1,53 @@
+"""
+Multi-Agentic AI Enterprise OS — Core Configuration
+
+Loads settings from environment variables with Pydantic Settings.
+"""
+
+from functools import lru_cache
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    """Application settings loaded from .env file."""
+
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+
+    # ── App ──────────────────────────────────
+    APP_NAME: str = "company-ai"
+    APP_ENV: str = "development"
+    DEBUG: bool = True
+    SECRET_KEY: str = "change-me-in-production"
+    API_V1_PREFIX: str = "/api/v1"
+    ALLOWED_ORIGINS: str = "http://localhost:3000,http://localhost:8000"
+
+    # ── Database ─────────────────────────────
+    DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@db:5432/company_ai"
+    DATABASE_ECHO: bool = False
+
+    # ── Redis ────────────────────────────────
+    REDIS_URL: str = "redis://redis:6379/0"
+    CELERY_BROKER_URL: str = "redis://redis:6379/1"
+    CELERY_RESULT_BACKEND: str = "redis://redis:6379/2"
+
+    # ── LiteLLM ──────────────────────────────
+    LITELLM_PROXY_URL: str = "http://litellm:4000"
+    LITELLM_MASTER_KEY: str = "sk-litellm-master-key"
+
+    # ── JWT ───────────────────────────────────
+    JWT_SECRET_KEY: str = "change-me-in-production"
+    JWT_ALGORITHM: str = "HS256"
+    JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 480
+
+    # ── Rate Limiting ────────────────────────
+    RATE_LIMIT_PER_MINUTE: int = 60
+
+    @property
+    def allowed_origins_list(self) -> list[str]:
+        return [origin.strip() for origin in self.ALLOWED_ORIGINS.split(",")]
+
+
+@lru_cache
+def get_settings() -> Settings:
+    return Settings()
