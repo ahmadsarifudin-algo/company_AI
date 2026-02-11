@@ -1,0 +1,29 @@
+# OS/Environment
+.env
+.env.*
+*.log
+node_modules/
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# System
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Build
+dist/
+build/
+*.egg-info/
+
+# Gemini/Agent artifacts (not project files)
+.gemini/
