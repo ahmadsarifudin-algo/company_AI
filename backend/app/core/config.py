@@ -43,6 +43,12 @@ class Settings(BaseSettings):
     # ── Rate Limiting ────────────────────────
     RATE_LIMIT_PER_MINUTE: int = 60
 
+    # ── Agent Execution ──────────────────────
+    AGENT_MAX_TOOL_CALLS: int = 50
+    AGENT_MAX_TOKENS: int = 100_000
+    AGENT_MAX_EXECUTION_TIME: int = 600  # seconds (10 minutes)
+    AGENT_LOOP_DETECTION_THRESHOLD: int = 5
+
     @property
     def allowed_origins_list(self) -> list[str]:
         return [origin.strip() for origin in self.ALLOWED_ORIGINS.split(",")]
