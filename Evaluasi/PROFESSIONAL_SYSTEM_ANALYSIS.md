@@ -1,242 +1,203 @@
-# Professional System Analysis Report
+# Professional System Analysis Report (v2)
 ## Multi-Agentic AI Enterprise Operating System
 
 **Analyst**: System Analyst (Professional Review)  
-**Date**: 11 February 2026  
-**Scope**: Full system review — 7 departments, 63 agents, 17 documents  
+**Date**: 12 February 2026  
+**Scope**: Full system review — design docs, running codebase, hardening plan  
+**Previous Review**: v1, 11 February 2026 (score: 7.4/10)  
 **Classification**: Internal — Strategic Planning
 
 ---
 
 ## 1. Executive Summary
 
-The Multi-Agentic AI Enterprise Operating System is an **ambitious and well-structured** enterprise framework designed to automate business operations across 7 departments using 63 AI agents supervised by human employees.
+Since the v1 review (11 Feb), the project has **transitioned from documentation-only to a working system**. Phase 1-3 are implemented with all 5 Docker containers running, 20 API endpoints live, and E2E tests passing. A comprehensive architecture hardening plan (Single Chokepoint principle) has been approved, addressing all critical gaps identified in v1.
 
 ### Overall Assessment
 
-| Aspect | Score | Rating |
-|--------|-------|--------|
-| Architecture Design | 8.5/10 | ✅ Excellent |
-| Security & Compliance | 8/10 | ✅ Strong |
-| Scalability Design | 7.5/10 | ✅ Good |
-| Operational Readiness | 5/10 | ⚠️ Needs Work |
-| Document Consistency | 6/10 | ⚠️ Moderate |
-| Cost Strategy | 8/10 | ✅ Well Planned |
-| Human Interface Design | 8.5/10 | ✅ Excellent |
-| **Overall** | **7.4/10** | **✅ Solid Foundation** |
+| Aspect | v1 Score | v2 Score | Δ | Rating |
+|--------|----------|----------|---|--------|
+| Architecture Design | 8.5/10 | 9.0/10 | +0.5 | ✅ Excellent |
+| Security & Compliance | 8/10 | 8.5/10 | +0.5 | ✅ Strong (hardening planned) |
+| Scalability Design | 7.5/10 | 8.0/10 | +0.5 | ✅ Good |
+| Operational Readiness | 5/10 | 7.0/10 | +2.0 | ✅ Significantly Improved |
+| Document Consistency | 6/10 | 7.0/10 | +1.0 | ✅ Improved |
+| Cost Strategy | 8/10 | 8.0/10 | — | ✅ Well Planned |
+| Human Interface Design | 8.5/10 | 8.5/10 | — | ✅ Excellent |
+| Implementation Progress | N/A | 7.5/10 | NEW | ✅ Phase 1-3 Complete |
+| **Overall** | **7.4/10** | **7.9/10** | **+0.5** | **✅ Strong Foundation** |
 
-> **Verdict**: The system is architecturally sound with strong governance. Key risks are in operational readiness (deployment gap between design and implementation) and document synchronization. With the improvements recommended below, this system is production-viable.
+> **Verdict**: The system has moved from Level 2 (Documented) to **Level 3 (Validated)** with working code, passing E2E tests, and a production-grade hardening plan. The approved Single Chokepoint architecture will bring the security model to enterprise-production standards when implemented.
 
 ---
 
-## 2. System Composition
+## 2. What Changed Since v1
 
-### 2.1 Document Inventory
+### 2.1 New Implementation (Phase 1-3)
 
-| # | Document | Size | Purpose | Status |
-|---|----------|------|---------|--------|
-| 1 | `TECHNICAL_ARCHITECTURE.md` | 331 lines | Tech stack, system diagram, implementation roadmap | ✅ Complete |
-| 2 | `ENTERPRISE_AGENTS_MANUAL.md` | ~290 lines | Cross-dept governance, Plan JSON, RBAC | ✅ Complete |
-| 3 | `ADMIN_GOVERNANCE_DESIGN.md` | ~200 lines | Model routing, cost control, policy engine | ✅ Complete |
-| 4 | `HUMAN_AGENT_SYSTEM.md` | 405 lines | Human-agent pairing, communication channels | ✅ Complete |
-| 5 | `HUMAN_AGENT_MAPPING.md` | ~200 lines | Org chart, agent-to-human assignment | ⚠️ Outdated* |
-| 6 | `HUMAN_INTERFACE_DESIGN.md` | ~106 lines | Dashboard "Claw" wireframe | ✅ Complete |
-| 7 | `MODEL_TIER_CLASSIFICATION.md` | 307 lines | 4-tier model cost strategy | ✅ Complete |
-| 8 | `AGENT_WORKFLOWS.md` | 152 lines | Dept-specific sequence diagrams | ⚠️ Incomplete* |
-| 9 | `SYSTEM_GAP_ANALYSIS.md` | 211 lines | 10 identified gaps | ⚠️ Outdated* |
-| 10 | `AGENT_GAP_REVIEW.md` | ~150 lines | Agent gap recommendations | ⚠️ Outdated* |
-| 11 | `Development/AGENTS_Tech.md` | 250 lines | Tech dept agents | ✅ Complete |
-| 12 | `Finance/AGENTS_FINANCE.md` | 244 lines | Finance dept agents | ✅ Complete |
-| 13 | `HR/AGENTS_HR.md` | ~196 lines | HR dept agents | ✅ Complete |
-| 14 | `Sales/AGENTS_SALES.md` | ~190 lines | Sales dept agents | ✅ Complete |
-| 15 | `Marketing/AGENTS_MARKETING.md` | ~256 lines | Digital marketing agents | ✅ Complete |
-| 16 | `Legal/AGENTS_LEGAL.md` | ~210 lines | Legal dept agents | ✅ Complete |
-| 17 | `BusinessDev/AGENTS_BIZDEV.md` | ~210 lines | Strategy & BizDev agents | ✅ Complete |
+| Component | v1 Status | v2 Status |
+|-----------|-----------|-----------|
+| Docker stack (5 containers) | ❌ Design only | ✅ Running (db, redis, litellm, app, worker) |
+| PostgreSQL + pgvector | ❌ Specified | ✅ Healthy, tables created |
+| Redis session store | ❌ Specified | ✅ Healthy |
+| LiteLLM proxy | ❌ Specified | ✅ Running, model routing active |
+| FastAPI application | ❌ Specified | ✅ 20 endpoints live |
+| Celery worker | ❌ Specified | ✅ Async task processing |
+| JWT authentication | ❌ Designed | ✅ Register + Login working |
+| Agent runtime (LangGraph) | ❌ Designed | ✅ BaseAgent, Supervisor, State |
+| RAG pipeline | ❌ Designed | ✅ Ingest → embed → search working |
+| Agent memory | ❌ Designed | ✅ Session (Redis) + Long-term (pgvector) |
+| E2E tests | ❌ None | ✅ 10/10 passing |
 
-> *\*Outdated documents reference 29 or 48 agents instead of current 63. See Section 6.*
+### 2.2 Codebase Metrics
 
-### 2.2 Agent Distribution
+| Metric | v1 | v2 |
+|--------|----|----|
+| Python source files | 0 | 39 |
+| Lines of code (est.) | 0 | ~4,500 |
+| API endpoints | 4 mentioned | 20 live |
+| Database models | 0 | 5 (User, Agent, Task, AuditLog, KnowledgeDocument) |
+| Service classes | 0 | 4 (AgentExecutor, AuditService, KnowledgeService, MemoryService) |
+| Docker services | 0 defined | 5 running |
+| Test coverage | 0 | E2E 10/10 |
+
+### 2.3 Architecture Hardening Plan (Approved)
+
+A **9-module production hardening plan** has been approved, based on the Single Chokepoint principle:
+
+| Module | Purpose | Impact |
+|--------|---------|--------|
+| 0. Single Chokepoint | LLMClient + ToolBroker + DAL gateways | Eliminates all bypass paths |
+| 1. Tool Registry | Static allowlist, sandbox, egress control | Prevents unauthorized tool use |
+| 2. ABAC Policy Engine | Context-aware access control | PII protection, approval chains |
+| 3. Agent Contracts | Rigid I/O schemas, approval gate, idempotency | Auditability, no duplicate side-effects |
+| 4. Audit Hash Chain | Tamper-evident event log, SHA-256 chain | Compliance, forensics |
+| 5. Observability | Trace IDs, metrics, admin dashboard | Debugging, cost visibility |
+| 6. Atomic Budget | Redis Lua reservation, concurrency-safe | No overspend |
+| 7. Resilience | Retry taxonomy, DLQ, circuit breaker | Graceful degradation |
+| 8. Reference Workflow | Finance invoice E2E | Validates all controls |
+
+---
+
+## 3. Updated Strengths Analysis
+
+### ✅ 3.1 Architecture — Enterprise-Grade (9.0/10)
+
+**Improved from v1**: Now validated with working code.
+
+- 5-layer architecture (Control → Orchestration → Intelligence → Execution → Data) is **implemented, not just designed**
+- LangGraph supervisor pattern (Global → Department → Agent) is coded and functional
+- LiteLLM proxy configured with model routing and fallback
+- Docker Compose with health checks and dependency ordering
+
+### ✅ 3.2 Security — Hardening Path Defined (8.5/10)
+
+**Improved from v1**: JWT auth implemented + hardening plan approved.
+
+Current state:
+- ✅ JWT + OAuth2 authentication (working)
+- ✅ Password hashing (bcrypt via passlib)
+- ✅ Immutable audit logs (working)
+- ⬜ → Planned: ABAC policy engine (YAML rules)
+- ⬜ → Planned: Tool sandbox + egress control
+- ⬜ → Planned: PII masking via DAL obligations
+- ⬜ → Planned: Tamper-evident hash chain
+
+### ✅ 3.3 Implementation Progress — Level 3 (7.5/10)
+
+**New category**: The project is no longer docs-only.
 
 ```mermaid
-pie title Agent Distribution by Department
-    "Tech" : 11
-    "Finance" : 9
-    "HR" : 8
-    "Sales" : 6
-    "Marketing" : 8
-    "Legal" : 7
-    "BizDev" : 7
-    "Enterprise" : 3
+graph LR
+    L1[Level 1: Designed ✅] --> L2[Level 2: Documented ✅]
+    L2 --> L3[Level 3: Validated ✅ ← Current]
+    L3 --> L4[Level 4: Hardened ⬜]
+    L4 --> L5[Level 5: Production ⬜]
 ```
 
-| Department | Agents | Supervisor | Specialists | Human Min |
-|-----------|--------|-----------|------------|-----------|
-| Enterprise | 3 | Global Supervisor | Scheduling, Communication | 1 |
-| Tech | 11 | Tech Supervisor | 10 specialists | 8 |
-| Finance | 9 | Finance Supervisor | 8 specialists | 3 |
-| HR | 8 | HR Supervisor | 7 specialists | 3 |
-| Sales | 6 | Sales Supervisor | 5 specialists | 1 |
-| Marketing | 8 | Marketing Supervisor | 7 specialists | 7 |
-| Legal | 7 | Legal Supervisor | 6 specialists | 4 |
-| BizDev | 7 | BizDev Supervisor | 6 specialists | 5 |
-| **Total** | **63** | **8** | **55** | **32** |
+| Component | v1 Level | v2 Level |
+|-----------|----------|----------|
+| Agent Architecture | L2 Documented | **L3 Validated** (BaseAgent, Supervisor coded) |
+| Auth & Security | L2 Documented | **L3 Validated** (JWT working, RBAC planned) |
+| RAG Pipeline | L2 Documented | **L3 Validated** (ingest, embed, search working) |
+| Cost Strategy | L2 Documented | L2 Documented (tiers defined, monitoring planned) |
+| Admin Governance | L2 Documented | L2 Documented (dashboard endpoints planned) |
+| Cross-Dept Integration | L1 Designed | L1 Designed (still needs work) |
+| Testing & QA | L1 Designed | **L3 Validated** (E2E 10/10) |
+| Deployment & DevOps | L1 Designed | **L3 Validated** (Docker Compose running) |
+
+### ✅ 3.4 Other Strengths (Unchanged)
+
+- **Human-in-the-Loop**: Multi-channel design (WhatsApp, Email, Dashboard) — 8.5/10
+- **Cost Strategy**: 4-tier model, ~$1,468/mo estimated (58% savings) — 8/10
+- **Governance**: Admin override, dynamic tier switching, budget caps — 8/10
 
 ---
 
-## 3. Strengths Analysis
+## 4. Updated Weakness Analysis
 
-### ✅ 3.1 Architecture — Well Layered
-The 5-layer architecture (Control Plane → Orchestration → Intelligence → Execution → Data) provides excellent separation of concerns. The use of LangGraph for stateful orchestration and LiteLLM for model routing is industry-appropriate.
+### Status of v1 Weaknesses
 
-### ✅ 3.2 Security Model — Defense in Depth
-- Row-Level Security (RLS) per department
-- Schema-based data isolation
-- Tool sandboxing (E2B / Docker)
-- PII masking middleware
-- Secrets management via Vault
-- Immutable audit logs
+| v1 Issue | v1 Priority | v2 Status |
+|----------|-------------|-----------|
+| 🔴 Document sync debt (29/48/63 mismatch) | P0 | 🔶 Partially fixed (roadmap updated, some docs still stale) |
+| 🟠 Missing cross-department protocols | P1 | ⬜ Still open |
+| 🟠 RBAC inconsistency across departments | P1 | 🔶 ABAC plan approved (will supersede) |
+| 🟠 Implementation roadmap gap (4 of 7 depts) | P1 | ✅ Fixed (Phase 4a+4b in roadmap) |
+| 🟡 No disaster recovery plan | P2 | ⬜ Still open |
+| 🟡 No API specification | P2 | ✅ Fixed (20 endpoints live, Swagger available) |
+| 🟡 Agent naming inconsistency | P2 | ⬜ Still open |
 
-This is enterprise-grade security design.
+### 4.1 Remaining Critical Issues
 
-### ✅ 3.3 Human-in-the-Loop — Comprehensive
-The Human-Agent Pairing System is the strongest component:
-- Multi-channel (WhatsApp, Email, Dashboard)
-- Natural language intent parsing (Bahasa Indonesia + English)
-- Tiered escalation (10min → 30min → 2hr → 4hr based on risk)
-- Meeting scheduling with cross-agent coordination
-- Human profile & preference registry
+#### 🔴 4.1.1 Single Chokepoint Not Yet Implemented
 
-### ✅ 3.4 Cost Strategy — 67% Savings
-The 4-tier model classification is well-designed:
-- Nano (15% of fleet) → $16/mo
-- Standard (52%) → $525/mo
-- Advanced (27%) → $468/mo
-- Specialist (6%) → $135/mo
-- **Total: ~$1,145/mo** vs $3,456/mo all-Advanced
+**Status**: Plan approved, code not written.
 
-### ✅ 3.5 Governance — Strong Controls
-- Admin override per agent/department
-- Dynamic tier switching (auto-upgrade/downgrade)
-- Configuration versioning with rollback
-- Budget caps per department AND per tier
-- LLM-as-Judge evaluation
+**Current risk**: `BaseAgent.call_llm()` directly calls LiteLLM. Agents can theoretically import any library and make direct HTTP/DB calls. No ToolBroker, no DAL, no budget enforcement at runtime.
+
+**Impact**: Until Module 0 is implemented, the security model is **permissive by default**.
+
+**Priority**: 🔴 P0 — Must implement before adding specialist agents.
 
 ---
 
-## 4. Weakness Analysis
+#### 🟠 4.1.2 Document Synchronization Still Incomplete
 
-### 🔴 4.1 Critical: Document Synchronization Debt
+**Improved but not resolved**. Key stale documents:
 
-**Problem**: Multiple documents contain contradictory numbers due to iterative expansion.
+| Document | Issue |
+|----------|-------|
+| `HUMAN_AGENT_SYSTEM.md` line 7 | Still references "29 agents" |
+| `HUMAN_AGENT_MAPPING.md` | Still lists 46 agents, 24 humans |
+| `MODEL_TIER_CLASSIFICATION.md` | Still covers only 48 agents |
+| `SYSTEM_GAP_ANALYSIS.md` | References 4 departments |
+| `AGENT_GAP_REVIEW.md` | References 39 agents |
 
-| Document | States | Actual |
-|----------|--------|--------|
-| `HUMAN_AGENT_SYSTEM.md` line 7 | "29 agents" | **63 agents** |
-| `HUMAN_AGENT_MAPPING.md` | 46 agents, 24 humans | **63 agents, 32 humans** |
-| `SYSTEM_GAP_ANALYSIS.md` | 4 departments | **7 departments** |
-| `AGENT_GAP_REVIEW.md` | 39 agents | **63 agents** |
-| `MODEL_TIER_CLASSIFICATION.md` | 48 agents | **63 agents** |
-| `ADMIN_GOVERNANCE_DESIGN.md` | 48 agents, $1,145/mo | **63 agents** |
-| `AGENT_WORKFLOWS.md` | 4 department workflows | Missing: Marketing, Legal, BizDev |
-| `TECHNICAL_ARCHITECTURE.md` roadmap | Only 4 department modules | Missing: Marketing, Legal, BizDev |
-
-**Impact**: Any stakeholder reading different docs will get contradictory information. This undermines trust and creates planning errors.
-
-**Priority**: 🔴 P0 — Must fix before any stakeholder presentation.
+**Priority**: 🟠 P1 — Should fix before stakeholder review.
 
 ---
 
-### 🟠 4.2 High: Missing Cross-Department Integration Protocols
+#### 🟠 4.1.3 No Unit/Integration Test Suite
 
-**Problem**: Legal and BizDev agents serve ALL departments but lack defined integration points.
+**Problem**: Only E2E test script exists (`test_e2e.py`). No:
+- Unit tests for services (AuditService, KnowledgeService)
+- Integration tests for supervisor pipeline
+- Policy/contract validation tests
 
-| Example | Current State | Should Be |
-|---------|---------------|-----------|
-| HR hires employee | HR Onboarding Agent drafts contract | Should route to Legal Contract Drafting for review |
-| Sales closes deal | Contract Review Agent checks terms | Should sync with Legal + Finance automatically |
-| BizDev finds partnership | Partnership Evaluation Agent scores | Should trigger Legal due diligence + Finance budget check |
-| Marketing runs campaign | Campaign Analytics tracks ROI | Should feed data to BizDev Market Research |
-
-**Recommendation**: Define explicit inter-department routing rules in `ENTERPRISE_AGENTS_MANUAL.md`.
+**Priority**: 🟠 P1 — Hardening plan includes comprehensive test strategy.
 
 ---
 
-### 🟠 4.3 High: RBAC Inconsistency Across Departments
+#### 🟡 4.1.4 Cross-Department Integration Still Undefined
 
-**Problem**: RBAC matrices use different formats and permission models:
+**Unchanged from v1**: Legal and BizDev agents serve all departments but lack defined routing rules. No agent can currently trigger another department's workflow.
 
-| Department | Format | Columns | Consistency |
-|-----------|--------|---------|-------------|
-| Tech | Table | Code Repo, CI/CD, Infra, Secrets | ✅ Clear |
-| Finance | Table | Ledger R, Ledger W, Treasury, Approvals | ✅ Clear |
-| HR | Table | Employee DB, Payroll, Compliance, Approvals | ✅ Clear |
-| Sales | Table | CRM Read, CRM Write, Pricing Edit, Approvals | ✅ Clear |
-| Marketing | Text table | CMS, Social API, Analytics, Budget, Publish | ⚠️ Different format |
-| Legal | Text table | Contract DB, Regulatory, Case Files, Sign/Execute | ⚠️ Different format |
-| BizDev | Text table | Market Data, CRM Access, Financial, Presentations | ⚠️ Different format |
-
-**Recommendation**: Standardize all RBAC matrices to same table format. Consider a unified RBAC administration in `ADMIN_GOVERNANCE_DESIGN.md`.
+**Priority**: 🟡 P2 — Address alongside Phase 4 specialist agents.
 
 ---
 
-### 🟠 4.4 High: Implementation Roadmap Gap
-
-**Problem**: `TECHNICAL_ARCHITECTURE.md` Phase 4 only covers 4 departments:
-```
-Phase 4: Department Modules (Weeks 7-10)
-- Tech Module, Finance Module, HR Module, Sales Module
-```
-
-Missing: Marketing (8 agents), Legal (7 agents), BizDev (7 agents) = **22 unplanned agents**.
-
-**Recommendation**: Extend roadmap to Phase 4a (Marketing), Phase 4b (Legal), Phase 4c (BizDev), adding ~6 weeks.
-
----
-
-### 🟡 4.5 Medium: No Disaster Recovery Plan
-
-**Problem**: No documentation on:
-- Database backup strategy
-- Service failover procedures
-- Data recovery SLA
-- Multi-region deployment
-- Incident response playbook
-
-**Recommendation**: Add DR section to `TECHNICAL_ARCHITECTURE.md`.
-
----
-
-### 🟡 4.6 Medium: No API Specification
-
-**Problem**: Only 4 endpoints briefly mentioned:
-```
-/api/v1/submit-request
-/api/v1/status/{id}
-/api/v1/feedback
-/api/v1/approve/{thread_id}
-```
-
-63 agents across 7 departments will need significantly more endpoints.
-
-**Recommendation**: Create an OpenAPI specification or at minimum document endpoints per department.
-
----
-
-### 🟡 4.7 Medium: Agent Naming Convention Inconsistency
-
-**Problem**: Agents lack consistent naming across docs:
-
-| Same Agent | Called In Doc A | Called In Doc B |
-|-----------|----------------|----------------|
-| Coding agent | "Backend Engineer Agent" | "Coder Agent" |
-| Financial prediction | "Forecasting Agent (Finance)" | "Forecasting Agent" |
-| Customer service | "Customer Success Agent" | "Customer Relationship Agent" |
-
-**Recommendation**: Create an `AGENT_REGISTRY.md` as single source of truth with canonical agent names.
-
----
-
-## 5. Risk Assessment
+## 5. Risk Assessment (Updated)
 
 ```mermaid
 quadrantChart
@@ -247,115 +208,119 @@ quadrantChart
     quadrant-2 Critical Risk
     quadrant-3 Low Priority
     quadrant-4 Mitigate
-    Document Sync: [0.9, 0.7]
-    Budget Overrun: [0.6, 0.8]
+    Chokepoint Gap: [0.9, 0.8]
+    Document Sync: [0.8, 0.5]
     Agent Hallucination: [0.7, 0.6]
+    Budget Overrun: [0.5, 0.7]
     Data Breach: [0.3, 0.9]
-    Scope Creep: [0.8, 0.5]
-    Vendor Lock-in: [0.4, 0.4]
-    Integration Failure: [0.5, 0.7]
+    Scope Creep: [0.7, 0.4]
+    Integration Failure: [0.4, 0.5]
 ```
 
-| # | Risk | Likelihood | Impact | Mitigation |
-|---|------|-----------|--------|-----------|
-| R1 | Document synchronization drift | High | High | Automate doc generation from single source |
-| R2 | LLM cost overrun (63 agents) | Medium | High | Budget caps + auto-downgrade already designed |
-| R3 | Agent hallucination in Legal/Finance | High | High | LLM-as-Judge + mandatory human review gates |
-| R4 | Data breach via cross-department access | Low | Critical | RLS + schema isolation already designed |
-| R5 | Scope creep (adding more agents) | High | Medium | Define agent addition governance process |
-| R6 | Vendor lock-in (OpenAI/Anthropic) | Medium | Medium | LiteLLM abstraction layer provides portability |
-| R7 | Integration complexity (7 dept × APIs) | Medium | High | Phased rollout already planned |
+| # | Risk | v1 | v2 | Change | Mitigation |
+|---|------|----|----|--------|------------|
+| R1 | Security bypass (no chokepoint) | N/A | 🔴 High/High | NEW | Implement Module 0 first |
+| R2 | Document sync drift | 🔴 High/High | 🟠 High/Med | ↓ Improved | Update remaining stale docs |
+| R3 | Agent hallucination (Legal/Finance) | 🔴 High/High | 🟠 High/High | — | LLM-as-Judge + approval gates planned |
+| R4 | LLM cost overrun | 🟠 Med/High | 🟡 Med/High | — | Budget reservation planned (Module 6) |
+| R5 | Data breach via cross-dept | 🟡 Low/Critical | 🟡 Low/Critical | — | DAL + ABAC planned (Module 2) |
+| R6 | Scope creep | 🟠 High/Med | 🟡 High/Med | ↓ Slightly | Hardening prioritized over feature expansion |
+| R7 | Integration complexity | 🟠 Med/High | 🟡 Med/Med | ↓ Reduced | Docker Compose working, phased rollout |
 
 ---
 
-## 6. Recommended Actions (Priority-Ordered)
+## 6. Recommended Actions (Updated)
 
-### 🔴 P0 — Must Fix (Before Stakeholder Presentation)
+### 🔴 P0 — Must Do Next
 
-| # | Action | Effort | Files Affected |
-|---|--------|--------|---------------|
-| 1 | **Sync all document numbers** to 63 agents / 7 departments | 2-3 hours | HUMAN_AGENT_SYSTEM, MAPPING, GAP docs, MODEL_TIER, ADMIN_GOVERNANCE |
-| 2 | **Update MODEL_TIER_CLASSIFICATION** for 15 new agents (Legal + BizDev) | 1 hour | MODEL_TIER_CLASSIFICATION |
-| 3 | **Update HUMAN_AGENT_MAPPING** with Legal + BizDev humans | 1 hour | HUMAN_AGENT_MAPPING |
+| # | Action | Effort | Impact |
+|---|--------|--------|--------|
+| 1 | **Implement Module 0: Single Chokepoint** (LLMClient, ToolBroker, DAL) | 1 week | Closes the #1 security gap |
+| 2 | **Implement Module 1: Tool Registry** (static allowlist) | 3 days | Prevents unauthorized tool execution |
+| 3 | **Add CI lint gate** banning direct imports in `agents/` | 1 hour | Prevents bypassing chokepoints |
 
-### 🟠 P1 — Should Fix (Before Implementation)
+### 🟠 P1 — Before Specialist Agents
 
-| # | Action | Effort | Files Affected |
-|---|--------|--------|---------------|
-| 4 | **Extend implementation roadmap** for Marketing/Legal/BizDev modules | 1 hour | TECHNICAL_ARCHITECTURE |
-| 5 | **Define cross-department integration protocols** | 2 hours | ENTERPRISE_AGENTS_MANUAL |
-| 6 | **Create AGENT_REGISTRY.md** with canonical names + IDs | 1 hour | New file |
-| 7 | **Standardize RBAC format** across all 7 departments | 2 hours | Marketing, Legal, BizDev docs |
+| # | Action | Effort | Impact |
+|---|--------|--------|--------|
+| 4 | **Implement Module 2: ABAC Policy Engine** | 1 week | PII protection, approval enforcement |
+| 5 | **Implement Module 4: Audit Hash Chain** | 3 days | Tamper-evident compliance |
+| 6 | **Implement Module 6: Atomic Budget** | 3 days | Prevent cost overrun |
+| 7 | **Sync stale documents** (HUMAN_AGENT_SYSTEM, MAPPING, GAP, MODEL_TIER) | 3 hours | Document consistency |
 
-### 🟡 P2 — Nice to Have (Improve Quality)
+### 🟡 P2 — Quality Improvement
 
-| # | Action | Effort | Files Affected |
-|---|--------|--------|---------------|
-| 8 | **Add 3 missing workflow diagrams** (Marketing, Legal, BizDev) | 1 hour | AGENT_WORKFLOWS |
-| 9 | **Add Disaster Recovery section** | 1 hour | TECHNICAL_ARCHITECTURE |
-| 10 | **Add API specification** (at least endpoint list) | 2 hours | TECHNICAL_ARCHITECTURE or new file |
-| 11 | **Archive outdated gap analysis docs** or merge into this report | 30 min | AGENT_GAP_REVIEW, SYSTEM_GAP_ANALYSIS |
-
----
-
-## 7. Revised Cost Projection
-
-The MODEL_TIER_CLASSIFICATION needs updating for 63 agents (currently covers 48):
-
-| Tier | Old Count | New Count (est.) | Monthly Cost (est.) |
-|------|-----------|-----------------|-------------------|
-| 💚 Nano | 7 | 9 | ~$22 |
-| 💛 Standard | 25 | 35 | ~$735 |
-| 🟠 Advanced | 13 | 16 | ~$576 |
-| 🔴 Specialist | 3 | 3 | ~$135 |
-| **Total** | **48** | **63** | **~$1,468/mo** |
-
-> Still **58% cheaper** than running all on Advanced (~$3,500/mo).
+| # | Action | Effort | Impact |
+|---|--------|--------|--------|
+| 8 | **Implement Modules 3,5,7** (contracts, tracing, resilience) | 2 weeks | Full hardening |
+| 9 | **Create AGENT_REGISTRY.md** with canonical names | 1 hour | Naming consistency |
+| 10 | **Define cross-department routing** | 2 hours | Enable multi-dept workflows |
+| 11 | **Add disaster recovery plan** | 1 hour | Operational readiness |
 
 ---
 
-## 8. Architecture Maturity Assessment
+## 7. Implementation Timeline Assessment
 
 ```mermaid
-graph LR
-    subgraph "Maturity Levels"
-        L1[Level 1: Designed ✅]
-        L2[Level 2: Documented ✅]
-        L3[Level 3: Validated ⚠️]
-        L4[Level 4: Implemented ❌]
-        L5[Level 5: Optimized ❌]
-    end
-    L1 --> L2 --> L3 --> L4 --> L5
+gantt
+    title Recommended Path to Production
+    dateFormat  YYYY-MM-DD
+    section Done ✅
+    Phase 1-3 (Infrastructure + Agents + RAG)  :done, d1, 2026-02-08, 5d
+    section Next (Hardening) 🔜
+    Module 0-1 (Chokepoint + Registry) :active, h1, 2026-02-13, 7d
+    Module 2-4 (ABAC + Contracts + Audit) :h2, after h1, 10d
+    Module 5-7 (Trace + Budget + Resilience) :h3, after h2, 10d
+    Module 8 + Tests :h4, after h3, 7d
+    section Then
+    Phase 4 (Specialist Agents) :p4, after h4, 21d
+    Phase 5-8 (UI + Admin + Live) :p5, after p4, 42d
 ```
 
-| Component | Level | Notes |
-|-----------|-------|-------|
-| Agent Architecture | L2 ✅ | Fully documented, well-designed |
-| RBAC & Security | L2 ✅ | Designed but not validated against real scenarios |
-| Human-Agent Pairing | L2 ✅ | Excellent design, not yet implemented |
-| Cost Strategy | L2 ✅ | Model tiers defined, needs update for 63 agents |
-| Admin Governance | L2 ✅ | Dashboard wireframe + policy rules designed |
-| Cross-Dept Integration | L1 ⚠️ | Designed at high level, details missing |
-| Testing & QA | L1 ⚠️ | Staging env described but no test cases |
-| Deployment & DevOps | L1 ⚠️ | Docker/K8s mentioned, no configs exist |
+| Milestone | Target | Confidence |
+|-----------|--------|------------|
+| Hardening complete (all 9 modules) | Mar 2026 | 🟡 Medium (depends on scope) |
+| First 4 dept agents operational | Apr 2026 | 🟢 High |
+| All 7 dept agents operational | May 2026 | 🟡 Medium |
+| Dashboard UI live | Jun 2026 | 🟡 Medium |
+| Production-ready | Jul 2026 | 🟡 Medium |
+
+---
+
+## 8. Revised Cost Projection
+
+| Tier | Count | Monthly Cost | Notes |
+|------|-------|-------------|-------|
+| 💚 Nano | ~9 | ~$22 | Monitoring, logging agents |
+| 💛 Standard | ~35 | ~$735 | Bulk of operations |
+| 🟠 Advanced | ~16 | ~$576 | Complex reasoning agents |
+| 🔴 Specialist | ~3 | ~$135 | Vision, code generation |
+| **Total** | **63** | **~$1,468/mo** | **58% savings vs all-Advanced** |
+
+Infrastructure costs (additional):
+| Item | Monthly Cost |
+|------|-------------|
+| Cloud hosting (DB + Redis + App) | ~$100-300 |
+| LiteLLM proxy | $0 (self-hosted) |
+| Monitoring/logging | ~$50-100 |
+| **Total estimated** | **~$1,618-1,868/mo** |
 
 ---
 
 ## 9. Final Verdict
 
-### What's Working Well
-1. **Architecture is enterprise-grade** — Correct patterns (LangGraph, LiteLLM, RLS, RAG)
-2. **Human oversight is first-class** — Multi-channel, escalation, approval gates
-3. **Cost optimization is smart** — 4-tier model saves 58-67%
-4. **Security model is strong** — Defense in depth at every layer
-5. **Department structure is comprehensive** — 7 departments with full agent rosters
+### Progress Since v1
+- **Moved from Level 2 → Level 3**: Working code, passing tests, Docker running
+- **Operational Readiness score jumped +2.0**: From design-only to running system
+- **Security plan comprehensive**: Single Chokepoint architecture addresses all v1 gaps
+- **API specification resolved**: 20 endpoints live with Swagger docs
 
-### What Needs Immediate Attention
-1. **Document sync** — Numbers don't match across files (29 vs 48 vs 63)
-2. **Cross-department protocols** — Legal/BizDev integration points undefined
-3. **Implementation roadmap** — Only covers 4 of 7 departments
-4. **Model tier update** — 15 new agents unclassified
+### Remaining Priorities
+1. **Implement Single Chokepoint (P0)** — Current security is permissive
+2. **Sync stale documents (P1)** — 5 docs still reference old agent counts
+3. **Build test suite (P1)** — Only E2E exists, need unit + policy + chaos tests
+4. **Cross-department routing (P2)** — Legal/BizDev integration undefined
 
 ### Bottom Line
 
-> **This system is a well-architected Level 2 (Documented) enterprise AI framework.** The core design decisions are sound. The primary risk is not technical — it's operational: keeping documentation synchronized as the system evolves, and bridging the gap between design and implementation. Addressing the P0 items above will bring the system to Level 3 (Validated) and ready for phased implementation.
+> **The system has successfully transitioned from "well-designed documentation" to a "validated working prototype."** The approved Single Chokepoint hardening plan is architecturally sound and, when implemented, will make this a production-grade enterprise AI platform. The critical path is clear: implement the 3 gateway chokepoints (Module 0) before adding any specialist agents. Score improved from **7.4 → 7.9/10** with clear path to **8.5+** after hardening completion.
