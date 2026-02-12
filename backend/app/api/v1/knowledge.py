@@ -8,11 +8,9 @@ Endpoints:
     DELETE /knowledge/{doc_id}     — Delete a document and all its chunks
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import APIRouter, HTTPException, Query
 
-from app.core.deps import DbSession, get_current_user
-from app.models.user import User
+from app.core.deps import CurrentUser, DbSession
 from app.schemas.knowledge import (
     DeleteResponse,
     DocumentListResponse,
@@ -27,16 +25,14 @@ from app.services.knowledge_service import KnowledgeService
 
 knowledge_router = APIRouter(prefix="/knowledge", tags=["knowledge"])
 
-CurrentUser = Depends(get_current_user)
-
 
 # ── Ingest ──────────────────────────────────────
 
 @knowledge_router.post("/ingest", response_model=IngestResponse)
 async def ingest_document(
     request: IngestRequest,
-    db: AsyncSession = DbSession,
-    user: User = CurrentUser,
+    db: DbSession,
+    user: CurrentUser,
 ) -> IngestResponse:
     """Ingest a document into the knowledge base.
 
@@ -61,8 +57,8 @@ async def ingest_document(
 @knowledge_router.post("/search", response_model=SearchResponse)
 async def search_knowledge(
     request: SearchRequest,
-    db: AsyncSession = DbSession,
-    user: User = CurrentUser,
+    db: DbSession,
+    user: CurrentUser,
 ) -> SearchResponse:
     """Semantic search across the knowledge base.
 
@@ -87,11 +83,11 @@ async def search_knowledge(
 
 @knowledge_router.get("/documents", response_model=DocumentListResponse)
 async def list_documents(
+    db: DbSession,
+    user: CurrentUser,
     department: str | None = Query(None),
     doc_type: str | None = Query(None),
     limit: int = Query(50, ge=1, le=200),
-    db: AsyncSession = DbSession,
-    user: User = CurrentUser,
 ) -> DocumentListResponse:
     """List documents in the knowledge base.
 
@@ -115,8 +111,8 @@ async def list_documents(
 @knowledge_router.delete("/{doc_id}", response_model=DeleteResponse)
 async def delete_document(
     doc_id: str,
-    db: AsyncSession = DbSession,
-    user: User = CurrentUser,
+    db: DbSession,
+    user: CurrentUser,
 ) -> DeleteResponse:
     """Delete a document and all its chunks from the knowledge base."""
     service = KnowledgeService(db)
