@@ -173,3 +173,73 @@ class ToolRegistry:
     def is_registered(cls, name: str) -> bool:
         """Check if a tool is registered."""
         return name in cls._tools
+
+
+# ── Workflow Tool Handlers (Reference Implementation) ─
+
+
+async def _save_invoice_handler(
+    invoice_data: dict,
+    department: str = "",
+    trace_id: str = "",
+) -> dict:
+    """Save an invoice record. In production this writes to DB via DAL."""
+    logger.info(
+        "tool_save_invoice",
+        trace_id=trace_id,
+        department=department,
+        invoice_id=invoice_data.get("invoice_id", "unknown"),
+    )
+    return {"saved": True, "invoice_id": invoice_data.get("invoice_id", "unknown")}
+
+
+async def _generate_invoice_pdf_handler(
+    invoice_data: dict,
+    output_path: str = "",
+    trace_id: str = "",
+) -> dict:
+    """Generate a PDF artifact for an invoice. Stub for reference."""
+    logger.info(
+        "tool_generate_pdf",
+        trace_id=trace_id,
+        output_path=output_path,
+    )
+    return {"generated": True, "path": output_path or f"/artifacts/{trace_id}/invoice.pdf"}
+
+
+def register_workflow_tools() -> None:
+    """Register all workflow tools in the ToolRegistry.
+
+    Called during application startup, before ToolRegistry.freeze().
+    """
+    if ToolRegistry.is_registered("save_invoice"):
+        return  # Already registered (e.g. in tests)
+
+    ToolRegistry.register(ToolMeta(
+        name="save_invoice",
+        handler=_save_invoice_handler,
+        description="Persist a finalized invoice to the database",
+        allowed_roles={"agent", "finance_agent", "supervisor"},
+        allowed_departments={"finance", "accounting", "*"},
+        risk_level=RiskLevel.MEDIUM,
+        has_egress=False,
+        has_file_access=False,
+        idempotent=True,
+        cost_estimate_usd=0.0,
+    ))
+
+    ToolRegistry.register(ToolMeta(
+        name="generate_invoice_pdf",
+        handler=_generate_invoice_pdf_handler,
+        description="Generate a PDF artifact for an invoice",
+        allowed_roles={"agent", "finance_agent", "supervisor"},
+        allowed_departments={"finance", "accounting", "*"},
+        risk_level=RiskLevel.LOW,
+        has_egress=False,
+        has_file_access=True,
+        idempotent=True,
+        cost_estimate_usd=0.0,
+    ))
+
+    logger.info("workflow_tools_registered", tools=["save_invoice", "generate_invoice_pdf"])
+

@@ -239,65 +239,67 @@ gantt
 
 > **Prinsip**: Semua side-effects (LLM, tool, DB, network) hanya lewat 3 gateway: `LLMClient`, `ToolBroker`, `DataAccessLayer`.
 
-- [ ] **3.5.0 Single Chokepoint Layer**
-  - [ ] `LLMClient` — sole LLM gateway (budget reserve → call → finalize → audit)
-  - [ ] `ToolBroker` — sole tool gateway (resolve → policy → egress → sandbox → audit → execute)
-  - [ ] `DataAccessLayer` — sole DB gateway (policy → query → mask → audit)
-  - [ ] Modify `BaseAgent` — inject 3 clients, remove direct access
-  - [ ] CI gate: ban `import requests/httpx/psycopg` di `agents/`
+- [x] **3.5.0 Single Chokepoint Layer** ✅
+  - [x] `LLMClient` — sole LLM gateway (budget reserve → call → finalize → audit)
+  - [x] `ToolBroker` — sole tool gateway (resolve → policy → egress → sandbox → audit → execute)
+  - [x] `DataAccessLayer` — sole DB gateway (policy → query → mask → audit)
+  - [x] Modify `BaseAgent` — inject 3 clients, remove direct access
+  - [x] CI gate: ban `import requests/httpx/psycopg` di `agents/`
 
-- [ ] **3.5.1 Tool Registry + Sandbox**
-  - [ ] Static tool registration (`ToolRegistry.register()`) saat startup
-  - [ ] Agent TIDAK boleh deklarasi tools sendiri
-  - [ ] `TaskSandbox` — per-task workspace isolation + auto-cleanup
-  - [ ] `NetworkPolicy` — egress allowlist per tool domain
+- [x] **3.5.1 Tool Registry + Sandbox** ✅
+  - [x] Static tool registration (`ToolRegistry.register()`) saat startup
+  - [x] Agent TIDAK boleh deklarasi tools sendiri
+  - [x] `TaskSandbox` — per-task workspace isolation + auto-cleanup
+  - [x] `NetworkPolicy` — egress allowlist per tool domain
 
-- [ ] **3.5.2 ABAC Policy Engine**
-  - [ ] `PolicyEngine` — evaluate context → allow/deny/require_approval + obligations
-  - [ ] `ResourceClassification` — data sensitivity map (public/internal/pii)
-  - [ ] YAML policy rules (PII+ticket, finance limits, after-hours block)
-  - [ ] DAL enforcement: field masking via obligations
+- [x] **3.5.2 ABAC Policy Engine** ✅
+  - [x] `PolicyEngine` — evaluate context → allow/deny/require_approval + obligations
+  - [x] `ResourceClassification` — data sensitivity map (public/internal/confidential/pii)
+  - [x] YAML policy rules (PII+ticket, finance limits, after-hours block)
+  - [x] DAL enforcement: field masking via obligations
 
-- [ ] **3.5.3 Agent Contracts + Approval Gate**
-  - [ ] `AgentInputSchema`, `AgentOutputSchema` — rigid Pydantic contracts
-  - [ ] `RiskLevel` — server-derived (dari tool metadata + resource sensitivity)
-  - [ ] `ApprovalGate` — state machine (require → stop → human approve → resume)
-  - [ ] `IdempotencyGuard` — `trace_id:step_id` key, no duplicate side-effects
+- [x] **3.5.3 Agent Contracts + Approval Gate** ✅
+  - [x] `AgentInputSchema`, `AgentOutputSchema` — rigid Pydantic contracts
+  - [x] `RiskLevel` — server-derived (dari tool metadata + resource sensitivity)
+  - [x] `ApprovalGate` — state machine (require → stop → human approve → resume)
+  - [x] `IdempotencyGuard` — `trace_id:step_id` key, no duplicate side-effects
 
-- [ ] **3.5.4 Event-Sourced Audit + Hash Chain**
-  - [ ] Append-only events: `prompt_hash`, `tool_args_hash`, `artifact_ids`
-  - [ ] Hash chain: `prev_event_hash` → tamper-evident log per trace
-  - [ ] `verify_chain_integrity(trace_id)` — detect tampering
+- [x] **3.5.4 Event-Sourced Audit + Hash Chain** ✅
+  - [x] Append-only events: `prompt_hash`, `tool_args_hash`, `artifact_ids`
+  - [x] Hash chain: `prev_event_hash` → tamper-evident log per trace
+  - [x] `verify_chain_integrity(trace_id)` — detect tampering
   - [ ] Admin endpoint: `/admin/traces/{trace_id}` → chain status
 
-- [ ] **3.5.5 Tracing + Observability**
-  - [ ] `TraceMiddleware` — auto `trace_id` per request (header + logs + audit + queue)
-  - [ ] `span_id` per graph node / tool call
-  - [ ] `MetricsCollector` — cost/failure/latency per agent/dept
+- [x] **3.5.5 Tracing + Observability** ✅
+  - [x] `TraceMiddleware` — auto `trace_id` per request (header + logs + audit + queue)
+  - [x] `span_id` per graph node / tool call
+  - [x] `MetricsCollector` — cost/failure/latency per agent/dept
   - [ ] Admin dashboard endpoints
 
-- [ ] **3.5.6 Atomic Budget**
-  - [ ] Redis Lua script: atomic check + reserve
-  - [ ] Reserve → call → finalize (or release on failure)
-  - [ ] Two layers: per-dept/day + per-agent/day (soft + hard limits)
+- [x] **3.5.6 Atomic Budget** ✅
+  - [x] Redis Lua script: atomic check + reserve
+  - [x] Reserve → call → finalize (or release on failure)
+  - [x] Two layers: per-dept/day + per-agent/day (soft + hard limits)
   - [ ] Concurrency test: 100 parallel, budget tidak double-spend
 
-- [ ] **3.5.7 Resilience**
-  - [ ] Retry taxonomy: transient=retry, policy/validation/budget=no-retry
-  - [ ] `DeadLetterQueue` — max retry → DLQ with replay capability
-  - [ ] `CircuitBreaker` — N failures → open 30-60s → fallback model
-  - [ ] Idempotency: side-effect tools check key sebelum execute
+- [x] **3.5.7 Resilience** ✅
+  - [x] Retry taxonomy: transient=retry, policy/validation/budget=no-retry
+  - [x] `DeadLetterQueue` — max retry → DLQ with replay capability
+  - [x] `CircuitBreaker` — N failures → open 30-60s → fallback model
+  - [x] Idempotency: side-effect tools check key sebelum execute
 
-- [ ] **3.5.8 Reference Workflow**
-  - [ ] Finance Invoice: Input → Draft → Review → ApprovalGate → Finalize
-  - [ ] Demonstrasi semua kontrol (policy, budget, approval, audit, idempotency)
+- [x] **3.5.8 Reference Workflow** ✅
+  - [x] Finance Invoice: Input → Draft → Review → ApprovalGate → Finalize
+  - [x] Demonstrasi semua kontrol (policy, budget, approval, audit, idempotency)
+  - [x] API endpoints: POST /workflows/invoice, approve, reject
+  - [x] Tools registered: save_invoice, generate_invoice_pdf
 
-- [ ] **3.5.9 Test Suite**
-  - [ ] Golden task tests (mock LLM deterministik, frozen time)
-  - [ ] Policy tests (tool deny, PII deny, approval enforce)
-  - [ ] PII tests (regex + masking + obligations)
-  - [ ] Chaos tests (Redis/LiteLLM down, concurrent budget, idempotency)
-  - [ ] Static tests (import ban di `agents/`)
+- [x] **3.5.9 Test Suite** ✅
+  - [x] Golden task tests (mock LLM deterministik, frozen time) — 8 tests
+  - [x] Policy tests (tool deny, PII deny, approval enforce) — 15 tests
+  - [x] PII tests (regex + masking + obligations) — 10 tests
+  - [x] Chaos tests (retry, DLQ, circuit breaker, budget, idempotency) — 20 tests
+  - [x] Static tests (import ban di `agents/`, AST analysis) — 12 tests
 
 ---
 
