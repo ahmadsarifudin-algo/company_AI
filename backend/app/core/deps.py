@@ -165,3 +165,83 @@ ManagerUp = Annotated["User", Depends(require_role("manager"))]
 LeadUp = Annotated["User", Depends(require_role("lead"))]
 
 
+# ── Granular Permission System ───────────────
+# Maps permission string → minimum role required
+PERMISSION_MAP: dict[str, str] = {
+    # Dashboard
+    "dashboard.read":           "contributor",
+    # Traces
+    "traces.read":              "contributor",
+    "traces.export":            "admin",
+    # Approvals
+    "approvals.read":           "lead",
+    "approvals.decide":         "lead",
+    # Policies
+    "policies.read":            "contributor",
+    # Agents
+    "agents.read":              "contributor",
+    "agents.prompt.read":       "contributor",
+    "agents.prompt.edit":       "manager",
+    "agents.prompt.rollback":   "manager",
+    "agents.test":              "lead",
+    "agents.sync":              "admin",
+    "agents.edit_privileged":   "admin",
+    # LLM Settings
+    "settings.llm.read":        "manager",
+    "settings.llm.edit":        "admin",
+    # Users
+    "users.read":               "manager",
+    "users.create":             "admin",
+    "users.delete":             "admin",
+    # Channels / Integrations
+    "channels.read":            "contributor",
+    "channels.configure":       "admin",
+    # Knowledge
+    "knowledge.read":           "contributor",
+    "knowledge.ingest":         "lead",
+    "knowledge.delete":         "manager",
+    # Tasks
+    "tasks.read":               "contributor",
+    "tasks.create":             "contributor",
+    "tasks.update":             "lead",
+    # Souls
+    "souls.read":               "contributor",
+    "souls.create":             "contributor",
+    "souls.delete":             "contributor",
+    # Workflows
+    "workflows.execute":        "lead",
+    "workflows.approve":        "lead",
+}
+
+
+def has_permission(user, permission: str) -> bool:
+    """Check if user role meets minimum for permission.
+
+    Returns False for unknown permissions (deny by default).
+    """
+    min_role = PERMISSION_MAP.get(permission)
+    if min_role is None:
+        return False
+    min_level = ROLE_HIERARCHY.get(min_role, 99)
+    user_level = ROLE_HIERARCHY.get(user.role, 0)
+    return user_level >= min_level
+
+
+def require_permission(permission: str):
+    """FastAPI dependency factory for permission-based access control.
+
+    Usage:
+        @router.get("/agents/{id}/prompt")
+        async def get_prompt(user: PermCheck("agents.prompt.read")): ...
+    or:
+        @router.get("/agents/{id}/prompt",
+                     dependencies=[Depends(require_permission("agents.prompt.read"))])
+    """
+    async def _check(user=Depends(get_current_user)):
+        if not has_permission(user, permission):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Permission '{permission}' denied for role '{user.role}'",
+            )
+        return user
+    return _check
