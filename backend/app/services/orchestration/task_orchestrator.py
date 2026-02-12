@@ -265,6 +265,25 @@ class TaskOrchestrator:
                 reason="agent_executor_unavailable",
             )
 
+            # ── Telemetry: init + workflow_started ────────────
+            import uuid as _uuid
+            from app.core.telemetry import Telemetry, EventType, now_ms
+            _tele = Telemetry(
+                agent_id=task.routing.agent or "orchestrator",
+                department=task.routing.department or "general",
+            )
+            _workflow_span = str(_uuid.uuid4())
+            _workflow_start_ms = now_ms()
+            _tele.emit(
+                trace_id=task.trace_id,
+                span_id=_workflow_span,
+                event_type=EventType.WORKFLOW_STARTED,
+                status="running",
+                current_step="direct_llm_with_tools",
+                summary=f"Orchestrator handling message via direct LLM",
+                requester_id=task.message.sender,
+            )
+
             # ── 1a. Build system prompt ──────────────────────────
             is_chat_channel = task.message.channel in ("telegram", "whatsapp")
 
@@ -439,7 +458,9 @@ class TaskOrchestrator:
                     # Execute tool via ToolBroker (safety chokepoint)
                     if broker and agent_ctx:
                         try:
+                            _tool_start = now_ms()
                             result = await broker.execute(agent_ctx, tc["name"], tc.get("args", {}))
+                            _tool_dur = now_ms() - _tool_start
 
                             if result.status == "needs_approval":
                                 approval_pending = True
@@ -449,6 +470,16 @@ class TaskOrchestrator:
                                     "name": tc["name"],
                                     "content": f"⏳ Tool '{tc['name']}' requires human approval (approval_id: {result.approval_id}). Execution paused.",
                                 })
+                                # Telemetry: approval_requested
+                                _tele.emit(
+                                    trace_id=task.trace_id,
+                                    span_id=str(_uuid.uuid4()),
+                                    parent_span_id=_workflow_span,
+                                    event_type=EventType.APPROVAL_REQUESTED,
+                                    tool_name=tc["name"],
+                                    approval_request_id=result.approval_id,
+                                    latency_ms=_tool_dur,
+                                )
                                 logger.info(
                                     "tool_approval_required",
                                     task_id=task.task_id,
@@ -484,6 +515,18 @@ class TaskOrchestrator:
                                     )
 
                                 break  # Stop processing more tool calls
+
+                            # Telemetry: tool_call event
+                            _tele.emit(
+                                trace_id=task.trace_id,
+                                span_id=str(_uuid.uuid4()),
+                                parent_span_id=_workflow_span,
+                                event_type=EventType.TOOL_CALLED if result.success else EventType.TOOL_FAILED,
+                                tool_name=tc["name"],
+                                latency_ms=_tool_dur,
+                                status="success" if result.success else "failed",
+                                error_message_short=result.error[:200] if result.error else None,
+                            )
 
                             # Successful tool execution
                             tool_output = str(result.output) if result.success else f"Error: {result.error}"
@@ -600,6 +643,17 @@ class TaskOrchestrator:
                 session.add_message("assistant", task.agent_response)
                 await SessionManager.save_session(session)
 
+            # Telemetry: workflow_completed
+            _tele.emit(
+                trace_id=task.trace_id,
+                span_id=_workflow_span,
+                event_type=EventType.WORKFLOW_COMPLETED,
+                status="completed",
+                latency_ms=latency_ms,
+                summary=f"Completed with {total_tool_calls} tool calls",
+                provider=provider,
+            )
+
             logger.info(
                 "orchestration_task_completed",
                 task_id=task.task_id,
@@ -618,6 +672,21 @@ class TaskOrchestrator:
         except Exception as e:
             task.status = TaskStatus.FAILED
             task.error = str(e)
+
+            # Telemetry: workflow_failed
+            try:
+                _tele.emit(
+                    trace_id=task.trace_id,
+                    span_id=_workflow_span,
+                    event_type=EventType.WORKFLOW_FAILED,
+                    status="failed",
+                    latency_ms=now_ms() - _workflow_start_ms,
+                    error_class=type(e).__name__,
+                    error_message_short=str(e)[:200],
+                )
+            except Exception:
+                pass  # Telemetry failure itself must not break error handling
+
             logger.error(
                 "orchestration_task_failed",
                 task_id=task.task_id,
