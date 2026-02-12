@@ -18,6 +18,8 @@ import httpx
 import structlog
 
 from app.core.config import get_settings
+from app.core.policy_context import PolicyContextBuilder
+from app.core.policy_engine import get_policy_engine
 
 logger = structlog.get_logger()
 settings = get_settings()
@@ -33,6 +35,14 @@ TIER_MODEL_MAP: dict[str, str] = {
 }
 
 
+class LLMCallDenied(Exception):
+    """Raised when an LLM call is denied by policy."""
+
+    def __init__(self, reason: str):
+        self.reason = reason
+        super().__init__(f"LLM call denied by policy: {reason}")
+
+
 @dataclass
 class LLMResponse:
     """Structured response from an LLM call."""
@@ -45,6 +55,8 @@ class LLMResponse:
     cost_usd: float = 0.0
     prompt_hash: str = ""
     raw: dict = field(default_factory=dict)
+    status: str = "success"  # "success" | "needs_approval"
+    approval_id: str | None = None
 
 
 @dataclass
@@ -65,6 +77,11 @@ class AgentContext:
     parent_span: str | None = None
     task_id: str = ""
     requester_id: str = ""
+    # ── Policy-ready fields ──
+    ticket_id: str = ""
+    approval_chain: list[str] = field(default_factory=list)
+    data_sensitivity: str = "internal"
+    risk_level: str = "low"
 
     def new_span(self) -> "AgentContext":
         """Create a child span within the same trace."""
@@ -79,6 +96,10 @@ class AgentContext:
             parent_span=self.span_id,
             task_id=self.task_id,
             requester_id=self.requester_id,
+            ticket_id=self.ticket_id,
+            approval_chain=list(self.approval_chain),
+            data_sensitivity=self.data_sensitivity,
+            risk_level=self.risk_level,
         )
 
 
@@ -149,6 +170,32 @@ class LLMClient:
         model = self._get_model(ctx.tier)
         prompt_hash = _compute_prompt_hash(messages)
         url = f"{self._base_url}/v1/chat/completions"
+
+        # ── Policy evaluation (NON-BYPASSABLE) ──
+        policy_ctx = PolicyContextBuilder.for_llm_call(ctx, model)
+        decision = get_policy_engine().evaluate(policy_ctx)
+
+        logger.info(
+            "policy_evaluated",
+            trace_id=ctx.trace_id,
+            span_id=ctx.span_id,
+            agent=ctx.agent_name,
+            action="llm_call",
+            resource=f"model:{model}",
+            decision=decision.action.value,
+            rule=decision.rule_name,
+        )
+
+        if decision.denied:
+            raise LLMCallDenied(decision.reason)
+
+        if decision.needs_approval:
+            return LLMResponse(
+                content="",
+                model=model,
+                prompt_hash=prompt_hash,
+                status="needs_approval",
+            )
 
         # Build payload
         payload: dict[str, Any] = {
