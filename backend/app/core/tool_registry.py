@@ -68,6 +68,7 @@ class ToolMeta:
     data_sensitivity_default: str = "internal"  # public | internal | confidential | pii
     side_effect_level: str = "none"  # none | low | high
     arg_sensitivity_hints: list[str] = field(default_factory=list)  # PII field names
+    parameters: dict = field(default_factory=dict)  # OpenAI function calling parameter schema
 
     def is_allowed_for(self, role: str, department: str) -> bool:
         """Check if a role+department combination is allowed."""
@@ -223,6 +224,7 @@ class ToolRegistry:
             has_egress=has_egress,
             egress_domains=egress_domains or [],
             has_file_access=has_file_access,
+            parameters=parameters or {},
         )
         cls.register(meta)
 

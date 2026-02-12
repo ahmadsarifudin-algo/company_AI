@@ -258,7 +258,7 @@ class TaskOrchestrator:
                 await cls._dispatch_reply(task)
                 return
 
-            # ── 1. Fallback: Direct LLM call ──────────────────
+            # ── 1. Fallback: Direct LLM call (with tools) ────────
             logger.info(
                 "orchestration_fallback_direct_llm",
                 task_id=task.task_id,
@@ -298,6 +298,34 @@ class TaskOrchestrator:
                         system_prompt = custom_prompt
                 except Exception:
                     pass  # Use default prompt
+
+            # ── 1b. Get available tools ──────────────────────────
+            tool_definitions = []
+            broker = None
+            agent_ctx = None
+            try:
+                from app.core.tool_broker import get_tool_broker
+                from app.core.llm_client import AgentContext
+
+                broker = get_tool_broker()
+                tool_definitions = broker.get_available_tools(
+                    role=task.routing.agent or "agent",
+                    department=task.routing.department,
+                )
+                agent_ctx = AgentContext(
+                    agent_id=task.routing.agent,
+                    agent_name=task.routing.agent,
+                    department=task.routing.department,
+                    trace_id=task.trace_id,
+                    task_id=task.task_id,
+                )
+                logger.info(
+                    "tools_loaded",
+                    task_id=task.task_id,
+                    tool_count=len(tool_definitions),
+                )
+            except Exception as e:
+                logger.debug("tools_load_failed", error=str(e))
 
             # ── 2. Get LLM provider + API key ────────────────
             provider = "google"
@@ -339,7 +367,7 @@ class TaskOrchestrator:
                 await cls._dispatch_reply(task)
                 return
 
-            # ── 3. Call LLM (with retry + fallback) ──────────
+            # ── 3. Call LLM (with tools + execution loop) ────
             user_content = task.message.content
 
             # Build conversation history from session
@@ -348,7 +376,8 @@ class TaskOrchestrator:
                 for msg in session.history[:-1]:
                     history_messages.append(msg)
 
-            response_text = await cls._call_llm_with_fallback(
+            # Initial LLM call
+            llm_response = await cls._call_llm_with_fallback(
                 provider=provider,
                 api_key=api_key,
                 fallback_provider=fallback_provider,
@@ -356,9 +385,143 @@ class TaskOrchestrator:
                 system_prompt=system_prompt,
                 history=history_messages,
                 user_content=user_content,
+                tools=tool_definitions if tool_definitions else None,
             )
 
-            # ── 4. Shape response (dual-output for chat) ─────
+            # ── 3a. Tool execution loop ──────────────────────
+            # Budget controls
+            MAX_TOOL_ITERATIONS = 5
+            MAX_TOOL_CALLS = 10
+            MAX_TOOL_TIMEOUT_S = 60
+            total_tool_calls = 0
+            tool_start_time = datetime.now(timezone.utc)
+            tool_messages = []  # accumulate tool call/result messages
+            approval_pending = False
+
+            for iteration in range(MAX_TOOL_ITERATIONS):
+                tool_calls = cls._extract_tool_calls(llm_response, provider)
+                if not tool_calls:
+                    break
+
+                logger.info(
+                    "tool_calls_received",
+                    task_id=task.task_id,
+                    iteration=iteration + 1,
+                    tool_count=len(tool_calls),
+                    tools=[tc["name"] for tc in tool_calls],
+                )
+
+                for tc in tool_calls:
+                    # Budget check
+                    total_tool_calls += 1
+                    if total_tool_calls > MAX_TOOL_CALLS:
+                        logger.warning("tool_budget_exceeded", task_id=task.task_id, limit="max_calls")
+                        tool_messages.append({
+                            "role": "tool",
+                            "tool_call_id": tc.get("id", ""),
+                            "name": tc["name"],
+                            "content": "Error: Tool call budget exceeded (max 10 calls per request).",
+                        })
+                        break
+
+                    # Timeout check
+                    elapsed = (datetime.now(timezone.utc) - tool_start_time).total_seconds()
+                    if elapsed > MAX_TOOL_TIMEOUT_S:
+                        logger.warning("tool_timeout", task_id=task.task_id, elapsed_s=elapsed)
+                        tool_messages.append({
+                            "role": "tool",
+                            "tool_call_id": tc.get("id", ""),
+                            "name": tc["name"],
+                            "content": "Error: Tool execution timeout exceeded (60s).",
+                        })
+                        break
+
+                    # Execute tool via ToolBroker (safety chokepoint)
+                    if broker and agent_ctx:
+                        try:
+                            result = await broker.execute(agent_ctx, tc["name"], tc.get("args", {}))
+
+                            if result.status == "needs_approval":
+                                approval_pending = True
+                                tool_messages.append({
+                                    "role": "tool",
+                                    "tool_call_id": tc.get("id", ""),
+                                    "name": tc["name"],
+                                    "content": f"⏳ Tool '{tc['name']}' requires human approval (approval_id: {result.approval_id}). Execution paused.",
+                                })
+                                logger.info(
+                                    "tool_approval_required",
+                                    task_id=task.task_id,
+                                    tool=tc["name"],
+                                    approval_id=result.approval_id,
+                                )
+                                break  # Stop processing more tool calls
+
+                            # Successful tool execution
+                            tool_output = str(result.output) if result.success else f"Error: {result.error}"
+                            tool_messages.append({
+                                "role": "tool",
+                                "tool_call_id": tc.get("id", ""),
+                                "name": tc["name"],
+                                "content": tool_output[:2000],  # Truncate large outputs
+                            })
+                            logger.info(
+                                "tool_executed",
+                                task_id=task.task_id,
+                                tool=tc["name"],
+                                success=result.success,
+                                time_ms=result.execution_time_ms,
+                            )
+
+                        except Exception as e:
+                            tool_messages.append({
+                                "role": "tool",
+                                "tool_call_id": tc.get("id", ""),
+                                "name": tc["name"],
+                                "content": f"Error executing tool: {str(e)[:500]}",
+                            })
+                            logger.warning(
+                                "tool_execution_error",
+                                task_id=task.task_id,
+                                tool=tc["name"],
+                                error=str(e),
+                            )
+                    else:
+                        tool_messages.append({
+                            "role": "tool",
+                            "tool_call_id": tc.get("id", ""),
+                            "name": tc["name"],
+                            "content": "Error: Tool broker unavailable.",
+                        })
+
+                if approval_pending:
+                    break
+
+                # Re-call LLM with tool results
+                llm_response = await cls._call_llm_with_fallback(
+                    provider=provider,
+                    api_key=api_key,
+                    fallback_provider=fallback_provider,
+                    fallback_key=fallback_key,
+                    system_prompt=system_prompt,
+                    history=history_messages,
+                    user_content=user_content,
+                    tools=tool_definitions if tool_definitions else None,
+                    tool_messages=tool_messages,
+                )
+
+            # ── 4. Extract final text response ───────────────
+            response_text = cls._extract_text_response(llm_response, provider)
+
+            # If approval is pending, prepend info
+            if approval_pending:
+                response_text = (
+                    "⏳ Aksi ini membutuhkan approval dari supervisor. "
+                    "Saya akan melanjutkan setelah approval diberikan.\n\n"
+                    + response_text
+                )
+
+            # ── 5. Shape response (dual-output for chat) ─────
             if is_chat_channel:
                 shaped = ResponseShaper.shape(response_text)
                 task.agent_response = shaped.human_reply
@@ -380,7 +543,7 @@ class TaskOrchestrator:
             task.status = TaskStatus.COMPLETED
             task.completed_at = datetime.now(timezone.utc)
 
-            # ── 5. Build ResponseEnvelope ─────────────────────
+            # ── 6. Build ResponseEnvelope ─────────────────────
             latency_ms = 0
             if task.completed_at and task.started_at:
                 latency_ms = int(
@@ -390,11 +553,17 @@ class TaskOrchestrator:
                 trace_id=task.trace_id,
                 run_id=task.task_id,
                 reply_text=task.agent_response,
-                control={"stop_reason": "completed"},
+                control={
+                    "stop_reason": "completed",
+                    "tool_calls_total": total_tool_calls,
+                    "approval_pending": approval_pending,
+                },
                 telemetry={
                     "latency_ms": latency_ms,
                     "provider": provider,
                     "routing_method": task.routing.routing_method,
+                    "execution_path": "direct_llm_with_tools",
+                    "tool_iterations": min(iteration + 1, MAX_TOOL_ITERATIONS) if tool_definitions else 0,
                 },
             )
 
@@ -412,9 +581,10 @@ class TaskOrchestrator:
                 routing_method=task.routing.routing_method,
                 response_len=len(task.agent_response),
                 latency_ms=latency_ms,
+                tool_calls_total=total_tool_calls,
             )
 
-            # ── 6. Send reply back to user ───────────────────
+            # ── 7. Send reply back to user ───────────────────
             await cls._dispatch_reply(task)
 
         except Exception as e:
@@ -442,8 +612,13 @@ class TaskOrchestrator:
         system_prompt: str,
         history: list[dict],
         user_content: str,
-    ) -> str:
-        """Call LLM with retry (3x backoff) and auto-fallback on 429."""
+        tools: list[dict] | None = None,
+        tool_messages: list[dict] | None = None,
+    ) -> dict:
+        """Call LLM with retry (3x backoff) and auto-fallback on 429.
+
+        Returns raw response data (dict) to support tool call extraction.
+        """
         import asyncio
         import httpx
 
@@ -453,7 +628,8 @@ class TaskOrchestrator:
         for attempt in range(max_retries):
             try:
                 result = await cls._call_llm(
-                    provider, api_key, system_prompt, history, user_content
+                    provider, api_key, system_prompt, history,
+                    user_content, tools, tool_messages,
                 )
                 return result
             except httpx.HTTPStatusError as e:
@@ -478,12 +654,13 @@ class TaskOrchestrator:
                             return await cls._call_llm(
                                 fallback_provider, fallback_key,
                                 system_prompt, history, user_content,
+                                tools, tool_messages,
                             )
                         raise
                 else:
                     raise
 
-        return "No response (all retries exhausted)"
+        return {"text": "No response (all retries exhausted)", "provider": provider}
 
     @classmethod
     async def _call_llm(
@@ -493,9 +670,17 @@ class TaskOrchestrator:
         system_prompt: str,
         history: list[dict],
         user_content: str,
-    ) -> str:
-        """Make a single LLM API call."""
+        tools: list[dict] | None = None,
+        tool_messages: list[dict] | None = None,
+    ) -> dict:
+        """Make a single LLM API call.
+
+        Returns a dict with structure:
+        - {"text": "...", "provider": "..."} for text responses
+        - {"tool_calls": [...], "provider": "..."} for tool call responses
+        """
         import httpx
+        import json
 
         async with httpx.AsyncClient(timeout=60.0) as client:
             if provider == "google":
@@ -505,22 +690,74 @@ class TaskOrchestrator:
                     contents.append({"role": role, "parts": [{"text": hist_msg["content"]}]})
                 contents.append({"role": "user", "parts": [{"text": user_content}]})
 
+                # Add tool call/result history for multi-turn tool use
+                if tool_messages:
+                    for tm in tool_messages:
+                        if tm["role"] == "tool":
+                            # Gemini uses functionResponse parts
+                            contents.append({
+                                "role": "user",
+                                "parts": [{
+                                    "functionResponse": {
+                                        "name": tm["name"],
+                                        "response": {"result": tm["content"]},
+                                    }
+                                }],
+                            })
+
+                # Build request body
+                request_body: dict = {
+                    "system_instruction": {"parts": [{"text": system_prompt}]},
+                    "contents": contents,
+                    "generationConfig": {"maxOutputTokens": 1024, "temperature": 0.7},
+                }
+
+                # Add tools if available
+                if tools:
+                    gemini_tools = []
+                    for t in tools:
+                        func = t.get("function", {})
+                        func_decl: dict = {
+                            "name": func.get("name", ""),
+                            "description": func.get("description", ""),
+                        }
+                        params = func.get("parameters")
+                        if params and params.get("properties"):
+                            func_decl["parameters"] = params
+                        gemini_tools.append(func_decl)
+
+                    if gemini_tools:
+                        request_body["tools"] = [{"function_declarations": gemini_tools}]
+
                 resp = await client.post(
                     f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}",
                     headers={"Content-Type": "application/json"},
-                    json={
-                        "system_instruction": {"parts": [{"text": system_prompt}]},
-                        "contents": contents,
-                        "generationConfig": {"maxOutputTokens": 1024, "temperature": 0.7},
-                    },
+                    json=request_body,
                 )
                 resp.raise_for_status()
                 data = resp.json()
                 candidates = data.get("candidates", [])
                 if candidates:
                     parts = candidates[0].get("content", {}).get("parts", [])
-                    return parts[0].get("text", "") if parts else "No response"
-                return "No response from model"
+                    # Check for function calls
+                    function_calls = [
+                        p["functionCall"] for p in parts
+                        if "functionCall" in p
+                    ]
+                    if function_calls:
+                        tool_calls = []
+                        for i, fc in enumerate(function_calls):
+                            tool_calls.append({
+                                "id": f"call_{i}",
+                                "name": fc.get("name", ""),
+                                "args": fc.get("args", {}),
+                            })
+                        return {"tool_calls": tool_calls, "provider": "google"}
+
+                    # Text response
+                    text = parts[0].get("text", "") if parts else "No response"
+                    return {"text": text, "provider": "google"}
+                return {"text": "No response from model", "provider": "google"}
 
             else:  # openai
                 messages = [{"role": "system", "content": system_prompt}]
@@ -528,19 +765,63 @@ class TaskOrchestrator:
                     messages.append({"role": hist_msg["role"], "content": hist_msg["content"]})
                 messages.append({"role": "user", "content": user_content})
 
+                # Add tool call/result history
+                if tool_messages:
+                    for tm in tool_messages:
+                        messages.append(tm)
+
+                request_body = {
+                    "model": "gpt-4o-mini",
+                    "messages": messages,
+                    "max_tokens": 1024,
+                    "temperature": 0.7,
+                }
+
+                # Add tools if available
+                if tools:
+                    request_body["tools"] = tools
+
                 resp = await client.post(
                     "https://api.openai.com/v1/chat/completions",
                     headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-                    json={
-                        "model": "gpt-4o-mini",
-                        "messages": messages,
-                        "max_tokens": 1024,
-                        "temperature": 0.7,
-                    },
+                    json=request_body,
                 )
                 resp.raise_for_status()
                 data = resp.json()
-                return data["choices"][0]["message"]["content"]
+                msg = data["choices"][0]["message"]
+
+                # Check for tool calls
+                if msg.get("tool_calls"):
+                    tool_calls = []
+                    for tc in msg["tool_calls"]:
+                        args_str = tc.get("function", {}).get("arguments", "{}")
+                        try:
+                            args = json.loads(args_str)
+                        except json.JSONDecodeError:
+                            args = {}
+                        tool_calls.append({
+                            "id": tc.get("id", ""),
+                            "name": tc.get("function", {}).get("name", ""),
+                            "args": args,
+                        })
+                    return {"tool_calls": tool_calls, "provider": "openai"}
+
+                return {"text": msg.get("content", ""), "provider": "openai"}
+
+    # ── Tool response helpers ─────────────────────────────────
+    @staticmethod
+    def _extract_tool_calls(llm_response: dict, provider: str) -> list[dict]:
+        """Extract tool calls from LLM response.
+
+        Returns list of {"id": "...", "name": "...", "args": {...}}
+        """
+        return llm_response.get("tool_calls", [])
+
+    @staticmethod
+    def _extract_text_response(llm_response: dict, provider: str) -> str:
+        """Extract final text from LLM response."""
+        return llm_response.get("text", "")
+
 
     @classmethod
     async def _dispatch_reply(cls, task: OrchestrationTask) -> None:
