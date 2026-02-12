@@ -150,9 +150,10 @@ class TestRetryPolicy:
 class TestDeadLetterQueue:
     """DLQ push, get, and replay."""
 
-    def test_push_creates_entry(self):
+    @pytest.mark.asyncio
+    async def test_push_creates_entry(self):
         """Push a failed operation → entry stored."""
-        entry = DeadLetterQueue.push(
+        entry = await DeadLetterQueue.push(
             trace_id="tr1",
             step_id="step1",
             error=ConnectionError("timeout"),
@@ -162,23 +163,25 @@ class TestDeadLetterQueue:
         assert entry.error_category == "transient"
         assert entry.replayed is False
 
-    def test_get_pending_returns_unreplayed(self):
+    @pytest.mark.asyncio
+    async def test_get_pending_returns_unreplayed(self):
         """get_pending() returns only unreplayed entries."""
-        DeadLetterQueue.push("tr2", "s1", RuntimeError("err1"))
-        DeadLetterQueue.push("tr3", "s2", RuntimeError("err2"))
+        await DeadLetterQueue.push("tr2", "s1", RuntimeError("err1"))
+        await DeadLetterQueue.push("tr3", "s2", RuntimeError("err2"))
         pending = DeadLetterQueue.get_pending()
         assert len(pending) == 2
 
-    def test_get_by_trace_filters(self):
+    @pytest.mark.asyncio
+    async def test_get_by_trace_filters(self):
         """get_by_trace() returns entries for specific trace."""
-        DeadLetterQueue.push("tr4", "s1", RuntimeError("err"))
-        DeadLetterQueue.push("tr5", "s1", RuntimeError("err"))
+        await DeadLetterQueue.push("tr4", "s1", RuntimeError("err"))
+        await DeadLetterQueue.push("tr5", "s1", RuntimeError("err"))
         assert len(DeadLetterQueue.get_by_trace("tr4")) == 1
 
     @pytest.mark.asyncio
     async def test_replay_executes_handler(self):
         """Replay a DLQ entry → handler is called."""
-        entry = DeadLetterQueue.push("tr6", "s1", RuntimeError("err"))
+        entry = await DeadLetterQueue.push("tr6", "s1", RuntimeError("err"))
 
         handler = AsyncMock(return_value="replayed!")
         result = await DeadLetterQueue.replay(entry.dlq_id, handler)
@@ -240,8 +243,9 @@ class TestBudgetEnforcer:
     def enforcer(self):
         """BudgetEnforcer with mock Redis."""
         mock_redis = MagicMock()
-        mock_redis.get = MagicMock(return_value=b"0.0")
-        mock_redis.eval = MagicMock(return_value=1)
+        mock_redis.get = AsyncMock(return_value=b"0.0")
+        mock_redis.eval = AsyncMock(return_value=1)
+        mock_redis.incrbyfloat = AsyncMock(return_value=0.0)
         return BudgetEnforcer(redis_client=mock_redis)
 
     @pytest.mark.asyncio
@@ -271,7 +275,7 @@ class TestBudgetEnforcer:
     async def test_check_budget_raises_when_exceeded(self):
         """Hard limit exceeded → BudgetExceeded raised."""
         mock_redis = MagicMock()
-        mock_redis.get = MagicMock(return_value=b"100.0")
+        mock_redis.get = AsyncMock(return_value=b"100.0")
         enforcer = BudgetEnforcer(redis_client=mock_redis)
         enforcer.set_limits("finance", soft_limit=5.0, hard_limit=10.0)
 

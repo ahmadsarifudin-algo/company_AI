@@ -205,7 +205,11 @@ class RetryPolicy:
         )
 
         if on_dlq:
-            await on_dlq(trace_id, step_id, last_error)
+            import inspect
+            if inspect.iscoroutinefunction(on_dlq):
+                await on_dlq(trace_id, step_id, last_error)
+            else:
+                on_dlq(trace_id, step_id, last_error)
 
         raise last_error
 
@@ -426,6 +430,29 @@ class CircuitBreaker:
                 failures=self._failure_count,
                 recovery_s=self.recovery_timeout_s,
             )
+
+    def record_failure(self) -> None:
+        """Record a failed call (public API for testing and direct use)."""
+        self._on_failure()
+
+    def record_success(self) -> None:
+        """Record a successful call (public API for testing and direct use)."""
+        self._on_success()
+
+    def allow_request(self) -> bool:
+        """Check whether the breaker currently allows requests."""
+        if self.state == BreakerState.CLOSED:
+            return True
+        if self.state == BreakerState.HALF_OPEN:
+            return True  # allow probe request
+        # OPEN — check if recovery timeout elapsed
+        import time as _time
+        elapsed = _time.time() - self._last_failure_time
+        if elapsed >= self.recovery_timeout_s:
+            self.state = BreakerState.HALF_OPEN
+            self._success_count_in_half_open = 0
+            return True
+        return False
 
     def reset(self) -> None:
         """Manually reset the breaker to CLOSED state."""
