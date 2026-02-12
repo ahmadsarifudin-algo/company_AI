@@ -64,6 +64,10 @@ class ToolMeta:
     has_file_access: bool = False
     idempotent: bool = False
     cost_estimate_usd: float = 0.0
+    # ── ABAC enrichment ──
+    data_sensitivity_default: str = "internal"  # public | internal | confidential | pii
+    side_effect_level: str = "none"  # none | low | high
+    arg_sensitivity_hints: list[str] = field(default_factory=list)  # PII field names
 
     def is_allowed_for(self, role: str, department: str) -> bool:
         """Check if a role+department combination is allowed."""
