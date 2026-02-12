@@ -156,4 +156,43 @@ if agent_result is not None:
 - [x] Falls back gracefully when DB/agent unavailable
 - [x] ResponseEnvelope built with `execution_path: agent_executor`
 
+---
 
+## Phase 3 — Session & Memory
+
+**Tanggal**: 2026-02-12  
+**Status**: ✅ Selesai
+
+### Tujuan
+
+Session percakapan persist di Redis (survive restart). Multi-turn conversation nyambung.
+
+### Perubahan
+
+#### [MODIFY] `backend/app/services/channels/session_manager.py`
+
+**Redis Persistence:**
+- `_get_redis()` — lazy connection, graceful fallback to in-memory
+- `_save_to_redis()` — serialize session via `to_dict()`, set TTL 2 jam
+- `_load_from_redis()` — deserialize via `from_dict()`
+- `_delete_from_redis()` — cleanup on reset
+
+**API change (breaking):**
+- `get_or_create()` → **async** (checks memory → Redis → create new)
+- `reset_session()` → **async** (also clears Redis)
+- Added `save_session()` — explicit persist after message added
+
+**Session serialization:**
+- `to_dict()` / `from_dict()` on `Session` dataclass
+
+#### [MODIFY] `backend/app/services/orchestration/task_orchestrator.py`
+
+- `await SessionManager.get_or_create(...)` (was sync)
+- `await SessionManager.save_session(session)` after every `add_message()` call (3 locations)
+
+### Test
+
+- [x] `get_or_create()` falls back to memory when Redis unavailable
+- [x] Sessions serialize/deserialize correctly
+- [x] TTL set to 7200s (2 hours) matching idle timeout
+- [x] All callers updated to async
