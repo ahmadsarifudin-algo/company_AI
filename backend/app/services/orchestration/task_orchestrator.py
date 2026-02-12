@@ -203,7 +203,12 @@ class TaskOrchestrator:
 
     @classmethod
     async def _execute(cls, task: OrchestrationTask, session=None) -> None:
-        """Execute the task by calling the LLM and replying via the same channel."""
+        """Execute the task by calling the agent pipeline and replying via the same channel.
+
+        Execution priority:
+        1. Try AgentExecutorService (real LangGraph pipeline with RAG + memory)
+        2. Fallback: direct LLM call (current behavior, no tools/RAG)
+        """
         import asyncio
         import os
         import httpx
@@ -211,11 +216,55 @@ class TaskOrchestrator:
         task.status = TaskStatus.IN_PROGRESS
 
         try:
-            # ── 1. Build system prompt ──────────────────────────
+            # ── 0. Try real agent executor (Phase 2) ──────────
+            agent_result = await cls._try_agent_executor(task)
+            if agent_result is not None:
+                task.agent_response = agent_result
+                task.status = TaskStatus.COMPLETED
+                task.completed_at = datetime.now(timezone.utc)
+
+                # Build envelope
+                latency_ms = int(
+                    (task.completed_at - task.started_at).total_seconds() * 1000
+                )
+                task.response_envelope = ResponseEnvelope(
+                    trace_id=task.trace_id,
+                    run_id=task.task_id,
+                    reply_text=task.agent_response,
+                    control={"stop_reason": "completed", "executor": "agent_executor"},
+                    telemetry={
+                        "latency_ms": latency_ms,
+                        "routing_method": task.routing.routing_method,
+                        "execution_path": "agent_executor",
+                    },
+                )
+
+                if session:
+                    session.add_message("assistant", task.agent_response)
+
+                logger.info(
+                    "orchestration_task_completed",
+                    task_id=task.task_id,
+                    trace_id=task.trace_id,
+                    agent=task.routing.agent,
+                    execution_path="agent_executor",
+                    latency_ms=latency_ms,
+                )
+
+                await cls._dispatch_reply(task)
+                return
+
+            # ── 1. Fallback: Direct LLM call ──────────────────
+            logger.info(
+                "orchestration_fallback_direct_llm",
+                task_id=task.task_id,
+                reason="agent_executor_unavailable",
+            )
+
+            # ── 1a. Build system prompt ──────────────────────────
             is_chat_channel = task.message.channel in ("telegram", "whatsapp")
 
             if is_chat_channel:
-                # Chat channel: SOUL-based conversational prompt + dual output
                 # Build user object stub for SoulResolver
                 user_stub = type("UserStub", (), {
                     "name": task.message.metadata.get("user_name"),
@@ -521,6 +570,66 @@ class TaskOrchestrator:
             channel=channel,
             has_envelope=task.response_envelope is not None,
         )
+
+    @classmethod
+    async def _try_agent_executor(
+        cls, task: OrchestrationTask
+    ) -> str | None:
+        """Attempt to execute via AgentExecutorService (full LangGraph pipeline).
+
+        Returns the response text on success, or None to trigger fallback.
+        """
+        try:
+            from app.core.deps import async_session
+            from app.services.agent_executor import AgentExecutorService
+            from sqlalchemy import select
+            from app.models.agent import Agent
+
+            async with async_session() as db:
+                # Resolve agent_id from routed agent name
+                result = await db.execute(
+                    select(Agent).where(
+                        Agent.name == task.routing.agent,
+                        Agent.department == task.routing.department,
+                    )
+                )
+                agent = result.scalars().first()
+
+                if not agent:
+                    logger.info(
+                        "agent_executor_skip_no_agent",
+                        agent_name=task.routing.agent,
+                        department=task.routing.department,
+                    )
+                    return None
+
+                executor = AgentExecutorService(db)
+                result = await executor.chat_with_agent(
+                    agent_id=agent.id,
+                    message=task.message.content,
+                    thread_id=task.trace_id,
+                )
+
+                if result.get("status") == "failed":
+                    logger.warning(
+                        "agent_executor_failed",
+                        error=result.get("error"),
+                        agent_id=agent.id,
+                    )
+                    return None
+
+                return result.get("response", "")
+
+        except ImportError:
+            logger.debug("agent_executor_import_unavailable")
+            return None
+        except Exception as e:
+            logger.warning(
+                "agent_executor_exception",
+                error=str(e),
+                task_id=task.task_id,
+            )
+            return None
 
     @classmethod
     async def handle_approval(
