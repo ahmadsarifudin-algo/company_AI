@@ -455,6 +455,34 @@ class TaskOrchestrator:
                                     tool=tc["name"],
                                     approval_id=result.approval_id,
                                 )
+
+                                # ── Component 4: Notify approver ──
+                                try:
+                                    from app.services.orchestration.notification_dispatcher import NotificationDispatcher
+                                    notify_msg = (
+                                        f"🔔 **Approval Required**\n\n"
+                                        f"**Tool:** {tc['name']}\n"
+                                        f"**Agent:** {agent_ctx.agent_name}\n"
+                                        f"**Department:** {agent_ctx.department}\n"
+                                        f"**Approval ID:** {result.approval_id}\n"
+                                        f"**Trace:** {task.trace_id}\n\n"
+                                        f"Reply **approve** or **reject** to this message."
+                                    )
+                                    # Send to supervisor channel (Telegram)
+                                    supervisor_chat = os.environ.get("SUPERVISOR_CHAT_ID", "")
+                                    if supervisor_chat:
+                                        await NotificationDispatcher.send(
+                                            channel="telegram",
+                                            recipient=supervisor_chat,
+                                            content=notify_msg,
+                                            trace_id=task.trace_id,
+                                        )
+                                except Exception as notify_err:
+                                    logger.warning(
+                                        "approver_notify_failed",
+                                        error=str(notify_err),
+                                    )
+
                                 break  # Stop processing more tool calls
 
                             # Successful tool execution

@@ -256,7 +256,7 @@ async def approval_check(state: InvoiceState) -> dict[str, Any]:
 
     if decision.action == PolicyAction.REQUIRE_APPROVAL:
         # M3: Create approval request via ApprovalGate
-        result = ApprovalGate.check(
+        result = await ApprovalGate.check(
             trace_id=ctx.trace_id,
             task_id=ctx.task_id,
             agent_name=ctx.agent_name,

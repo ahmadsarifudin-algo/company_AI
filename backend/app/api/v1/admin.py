@@ -1018,6 +1018,9 @@ async def list_users(
                 "role": u.role,
                 "is_active": u.is_active,
                 "status_label": u.status_label,
+                "phone_whatsapp": u.phone_whatsapp,
+                "telegram_chat_id": u.telegram_chat_id,
+                "notification_channels": u.notification_channels,
                 "created_at": u.created_at.isoformat() if hasattr(u, "created_at") and u.created_at else None,
             }
             for u in users
@@ -1050,6 +1053,8 @@ async def create_user(
     name = data.get("name", "").strip()
     department = data.get("department", "").strip()
     role = data.get("role", "contributor").strip()
+    phone_whatsapp = data.get("phone_whatsapp", "").strip() or None
+    telegram_chat_id = data.get("telegram_chat_id", "").strip() or None
 
     if not email or not name or not department:
         raise HTTPException(400, "email, name, and department are required")
@@ -1074,6 +1079,8 @@ async def create_user(
         role=role,
         is_active=False,
         hashed_password=None,
+        phone_whatsapp=phone_whatsapp,
+        telegram_chat_id=telegram_chat_id,
         invite_token_hash=token_hash,
         invite_expires_at=expires,
     )
@@ -1089,6 +1096,8 @@ async def create_user(
             "department": user.department,
             "role": user.role,
             "status_label": user.status_label,
+            "phone_whatsapp": user.phone_whatsapp,
+            "telegram_chat_id": user.telegram_chat_id,
         },
         "invite_token": raw_token,
         "invite_link": f"/invite?token={raw_token}",
@@ -1192,6 +1201,26 @@ async def decide_approval(
     )
     db.add(audit_event)
     await db.flush()
+
+    # ── Sync decision to ApprovalGate (Redis) ──
+    try:
+        from app.core.approval_gate import ApprovalGate
+        # Find pending approvals for this trace
+        pending = await ApprovalGate.get_pending()
+        matched = [r for r in pending if r.trace_id == trace_id]
+        for req in matched:
+            if body.decision == "approved":
+                await ApprovalGate.grant(req.approval_id, user.email)
+                # Trigger resume if tool context exists
+                if req.tool_name:
+                    import asyncio
+                    from app.api.v1.gateway import _resume_approved_tool
+                    asyncio.create_task(_resume_approved_tool(req))
+            else:
+                await ApprovalGate.reject(req.approval_id, user.email, body.reason or "")
+    except Exception as e:
+        import structlog
+        structlog.get_logger().warning("approval_gate_sync_error", trace_id=trace_id, error=str(e))
 
     return {
         "status": "ok",

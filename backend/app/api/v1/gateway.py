@@ -49,16 +49,35 @@ async def whatsapp_webhook(
     # Check for approval replies
     body_lower = Body.strip().lower()
     if body_lower in ("approve", "approved", "setuju", "ya"):
-        # TODO: Find pending approval for this sender and approve
-        logger.info("whatsapp_approval_reply", sender=From, decision="approved")
+        from app.core.approval_gate import ApprovalGate
+        pending = await ApprovalGate.get_pending_for_sender(From)
+        if pending:
+            await ApprovalGate.grant(pending.approval_id, From)
+            logger.info("whatsapp_approval_granted", sender=From, approval_id=pending.approval_id)
+            # Trigger resume
+            import asyncio
+            asyncio.create_task(_resume_approved_tool(pending))
+            return JSONResponse(
+                content={"status": "approval_processed", "decision": "approved", "approval_id": pending.approval_id},
+                status_code=200,
+            )
+        logger.info("whatsapp_approval_reply_no_pending", sender=From)
         return JSONResponse(
-            content={"status": "approval_processed", "decision": "approved"},
+            content={"status": "no_pending_approval"},
             status_code=200,
         )
     elif body_lower in ("reject", "rejected", "tolak", "tidak"):
-        logger.info("whatsapp_approval_reply", sender=From, decision="rejected")
+        from app.core.approval_gate import ApprovalGate
+        pending = await ApprovalGate.get_pending_for_sender(From)
+        if pending:
+            await ApprovalGate.reject(pending.approval_id, From, "Rejected via WhatsApp")
+            logger.info("whatsapp_approval_rejected", sender=From, approval_id=pending.approval_id)
+            return JSONResponse(
+                content={"status": "approval_processed", "decision": "rejected", "approval_id": pending.approval_id},
+                status_code=200,
+            )
         return JSONResponse(
-            content={"status": "approval_processed", "decision": "rejected"},
+            content={"status": "no_pending_approval"},
             status_code=200,
         )
 
@@ -120,15 +139,35 @@ async def telegram_webhook(request: Request) -> JSONResponse:
     # Check for approval replies (fast path — no LLM needed)
     body_lower = message.content.strip().lower()
     if body_lower in ("approve", "approved", "setuju", "ya"):
-        logger.info("telegram_approval_reply", sender=message.sender, decision="approved")
+        from app.core.approval_gate import ApprovalGate
+        pending = await ApprovalGate.get_pending_for_sender(message.sender)
+        if pending:
+            await ApprovalGate.grant(pending.approval_id, message.sender)
+            logger.info("telegram_approval_granted", sender=message.sender, approval_id=pending.approval_id)
+            # Trigger resume
+            import asyncio
+            asyncio.create_task(_resume_approved_tool(pending))
+            return JSONResponse(
+                content={"status": "approval_processed", "decision": "approved", "approval_id": pending.approval_id},
+                status_code=200,
+            )
+        logger.info("telegram_approval_reply_no_pending", sender=message.sender)
         return JSONResponse(
-            content={"status": "approval_processed", "decision": "approved"},
+            content={"status": "no_pending_approval"},
             status_code=200,
         )
     elif body_lower in ("reject", "rejected", "tolak", "tidak"):
-        logger.info("telegram_approval_reply", sender=message.sender, decision="rejected")
+        from app.core.approval_gate import ApprovalGate
+        pending = await ApprovalGate.get_pending_for_sender(message.sender)
+        if pending:
+            await ApprovalGate.reject(pending.approval_id, message.sender, "Rejected via Telegram")
+            logger.info("telegram_approval_rejected", sender=message.sender, approval_id=pending.approval_id)
+            return JSONResponse(
+                content={"status": "approval_processed", "decision": "rejected", "approval_id": pending.approval_id},
+                status_code=200,
+            )
         return JSONResponse(
-            content={"status": "approval_processed", "decision": "rejected"},
+            content={"status": "no_pending_approval"},
             status_code=200,
         )
 
@@ -168,6 +207,94 @@ async def _process_telegram_message(message: UnifiedMessage) -> None:
             )
         except Exception:
             pass  # Last resort — can't do anything more
+
+
+async def _resume_approved_tool(approval_request) -> None:
+    """Resume tool execution after approval is granted.
+
+    Executes the approved tool via ToolBroker and sends the result
+    back to the user via the original channel.
+
+    Args:
+        approval_request: The ApprovalRequest with tool context.
+    """
+    import json
+
+    from app.core.approval_gate import ApprovalRequest
+    from app.services.orchestration.notification_dispatcher import NotificationDispatcher
+
+    req: ApprovalRequest = approval_request
+
+    if not req.tool_name:
+        logger.info(
+            "resume_skip_no_tool",
+            approval_id=req.approval_id,
+        )
+        return
+
+    try:
+        # Execute the tool via ToolBroker
+        from app.core.llm_client import AgentContext
+        from app.core.tool_broker import get_tool_broker
+
+        broker = get_tool_broker()
+        tool_args = json.loads(req.tool_args) if req.tool_args else {}
+
+        ctx = AgentContext(
+            agent_id=req.agent_name,
+            agent_name=req.agent_name,
+            department=req.department,
+            role="agent",
+            tier="standard",
+            trace_id=req.trace_id,
+            span_id="",
+            parent_span="",
+            task_id=req.task_id,
+            requester_id=req.sender,
+        )
+
+        result = await broker.execute(ctx, req.tool_name, tool_args)
+
+        # Send result back to user
+        if result.success:
+            reply = f"✅ Tool '{req.tool_name}' approved and executed.\n\nResult: {str(result.output)[:500]}"
+        else:
+            reply = f"❌ Tool '{req.tool_name}' was approved but failed: {result.error}"
+
+        if req.channel and req.sender:
+            await NotificationDispatcher.send(
+                channel=req.channel,
+                recipient=req.chat_id or req.sender,
+                content=reply,
+                trace_id=req.trace_id,
+            )
+
+        logger.info(
+            "approval_resume_completed",
+            approval_id=req.approval_id,
+            tool=req.tool_name,
+            success=result.success,
+        )
+
+    except Exception as e:
+        logger.error(
+            "approval_resume_failed",
+            approval_id=req.approval_id,
+            tool=req.tool_name,
+            error=str(e),
+        )
+        # Try to notify user of failure
+        try:
+            from app.services.orchestration.notification_dispatcher import NotificationDispatcher
+            if req.channel and req.sender:
+                await NotificationDispatcher.send(
+                    channel=req.channel,
+                    recipient=req.chat_id or req.sender,
+                    content=f"⚠️ Approved tool '{req.tool_name}' failed to execute: {str(e)[:200]}",
+                    trace_id=req.trace_id,
+                )
+        except Exception:
+            pass
 
 
 @router.get("/status/{task_id}")
