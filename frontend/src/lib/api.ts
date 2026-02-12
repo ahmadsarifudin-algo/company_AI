@@ -148,6 +148,63 @@ export interface AgentPromptData {
   history: PromptHistoryEntry[];
 }
 
+// ── Task Types ─────────────────────────────
+export interface TaskRow {
+  id: string;
+  department: string;
+  status: string;
+  submitted_by: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+  description: string | null;
+}
+
+export interface SoulTemplate {
+  id: string;
+  name: string;
+  description: string | null;
+  tone: string;
+  language_style: string;
+  personality: string;
+  boundaries: string | null;
+  greeting: string | null;
+  icon: string | null;
+}
+
+export interface UserSoul {
+  id: string;
+  name: string;
+  tone: string;
+  language_style: string;
+  personality: string;
+  boundaries: string | null;
+  greeting: string | null;
+  template_id: string | null;
+  is_active: boolean;
+}
+
+export interface KnowledgeDoc {
+  doc_id: string;
+  title: string;
+  department: string | null;
+  doc_type: string | null;
+  source: string | null;
+  chunk_count: number;
+  created_at: string | null;
+}
+
+export interface WorkflowInvoiceResult {
+  trace_id: string;
+  status: string;
+  invoice_id: string;
+  invoice_draft: Record<string, unknown>;
+  review_result: Record<string, unknown>;
+  approval_id: string;
+  approval_status: string;
+  error: string;
+  audit_trail: string[];
+}
+
 // ── API Functions ──────────────────────────
 
 export interface UserRow {
@@ -158,6 +215,9 @@ export interface UserRow {
   role: string;
   is_active: boolean;
   status_label: string;
+  phone_whatsapp: string | null;
+  telegram_chat_id: string | null;
+  notification_channels: string;
   created_at: string | null;
 }
 
@@ -387,5 +447,97 @@ export const api = {
     fetchJSON<{ service: string; status: string; message: string }>('/integrations/test', {
       method: 'POST',
       body: JSON.stringify({ service }),
+    }),
+
+  // ── Tasks ──────────────────────────────────
+
+  getTasks: (params?: { department?: string; task_status?: string; limit?: number }) => {
+    const qs = new URLSearchParams();
+    if (params?.department) qs.set('department', params.department);
+    if (params?.task_status) qs.set('task_status', params.task_status);
+    if (params?.limit) qs.set('limit', String(params.limit));
+    const q = qs.toString();
+    return fetchJSON<TaskRow[]>(`/tasks${q ? `?${q}` : ''}`);
+  },
+
+  createTask: (data: { department: string; description: string }) =>
+    fetchJSON<TaskRow>('/tasks', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  updateTaskStatus: (taskId: string, newStatus: string) =>
+    fetchJSON<{ id: string; status: string; message: string }>(`/tasks/${taskId}/status?new_status=${newStatus}`, {
+      method: 'PATCH',
+    }),
+
+  // ── Souls ──────────────────────────────────
+
+  getSoulTemplates: () =>
+    fetchJSON<SoulTemplate[]>('/souls/templates'),
+
+  getMySouls: () =>
+    fetchJSON<UserSoul[]>('/souls/my'),
+
+  createSoul: (data: { name: string; tone?: string; language_style?: string; personality: string; template_id?: string }) =>
+    fetchJSON<UserSoul>('/souls', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  activateSoul: (soulId: string) =>
+    fetchJSON<{ status: string }>(`/souls/${soulId}/activate`, {
+      method: 'POST',
+    }),
+
+  deleteSoul: (soulId: string) =>
+    fetchJSON<{ status: string }>(`/souls/${soulId}`, {
+      method: 'DELETE',
+    }),
+
+  // ── Knowledge ──────────────────────────────
+
+  getDocuments: (params?: { department?: string; doc_type?: string; limit?: number }) => {
+    const qs = new URLSearchParams();
+    if (params?.department) qs.set('department', params.department);
+    if (params?.doc_type) qs.set('doc_type', params.doc_type);
+    if (params?.limit) qs.set('limit', String(params.limit));
+    const q = qs.toString();
+    return fetchJSON<{ documents: KnowledgeDoc[]; total: number }>(`/knowledge/documents${q ? `?${q}` : ''}`);
+  },
+
+  ingestDocument: (data: { title: string; content: string; department: string; doc_type?: string; source?: string }) =>
+    fetchJSON<{ doc_id: string; chunks_created: number }>('/knowledge/ingest', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  searchKnowledge: (data: { query: string; department?: string; doc_type?: string; top_k?: number }) =>
+    fetchJSON<{ query: string; results: { chunk_text: string; score: number; doc_id: string; title: string }[]; total: number }>('/knowledge/search', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  deleteDocument: (docId: string) =>
+    fetchJSON<{ parent_doc_id: string; chunks_deleted: number }>(`/knowledge/${docId}`, {
+      method: 'DELETE',
+    }),
+
+  // ── Workflows ──────────────────────────────
+
+  createInvoice: (data: { vendor: string; amount: number; description: string; department: string; requester: string }) =>
+    fetchJSON<WorkflowInvoiceResult>('/workflows/invoice', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  approveInvoice: (approvalId: string, approverId = 'admin') =>
+    fetchJSON<{ approval_id: string; status: string }>(`/workflows/invoice/${approvalId}/approve?approver_id=${approverId}`, {
+      method: 'POST',
+    }),
+
+  rejectInvoice: (approvalId: string, rejectorId = 'admin', reason = '') =>
+    fetchJSON<{ approval_id: string; status: string }>(`/workflows/invoice/${approvalId}/reject?rejector_id=${rejectorId}&reason=${reason}`, {
+      method: 'POST',
     }),
 };
