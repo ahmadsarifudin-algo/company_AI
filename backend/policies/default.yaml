@@ -133,13 +133,26 @@ rules:
   - name: payroll_access_hr_only
     description: >
       Payroll data is restricted to HR department agents.
-      Other departments are denied access.
+      Other departments are denied access without a ticket.
     conditions:
       data_sensitivity: pii
       action: read
     requirements:
       has_ticket_id: true
-    decision: deny_if_unmet
+    decision: require_approval
+    obligations:
+      mask_fields:
+        - nik
+        - ktp
+        - rekening
+        - phone
+        - email_personal
+        - alamat
+        - salary
+        - npwp
+      log_level: warning
+      notify_roles:
+        - compliance_officer
 
   # ── Write Operations Audit ─────────────────────
 

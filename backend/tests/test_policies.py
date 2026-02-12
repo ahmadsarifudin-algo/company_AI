@@ -118,6 +118,7 @@ class TestFinancePolicy:
             department="finance",
             risk_level="critical",
             action="write",
+            time_of_day="business_hours",
         )
         decision = engine.evaluate(ctx)
         assert decision.action == PolicyAction.REQUIRE_APPROVAL

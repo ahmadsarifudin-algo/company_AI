@@ -32,7 +32,9 @@ RUN pip install --no-cache-dir \
     "structlog>=24.1.0" \
     "httpx>=0.26.0" \
     "email-validator>=2.1.0" \
-    "psycopg2-binary>=2.9.0"
+    "psycopg2-binary>=2.9.0" \
+    "pytest-asyncio>=0.23.0" \
+    "pyyaml>=6.0"
 
 # Copy application
 COPY . .

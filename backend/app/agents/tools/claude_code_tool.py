@@ -118,7 +118,7 @@ async def _call_code_llm(
         Dict with status, response text, model used, and token usage.
     """
     try:
-        import litellm
+        from app.core.llm_client import AgentContext, get_llm_client
 
         system_prompt = _SYSTEM_PROMPTS.get(mode, _SYSTEM_PROMPTS["generate"])
 
@@ -138,37 +138,41 @@ async def _call_code_llm(
 
         messages.append({"role": "user", "content": user_prompt})
 
-        response = await litellm.acompletion(
-            model="code",  # Routes to code tier via LiteLLM proxy
+        llm_client = get_llm_client()
+        agent_ctx = AgentContext(
+            agent_id="claude_code_tool",
+            agent_name="claude_code_tool",
+            department="tech",
+            tier="code",
+        )
+        llm_response = await llm_client.call(
+            ctx=agent_ctx,
             messages=messages,
             max_tokens=max_tokens,
             temperature=0.2,  # Low temperature for precise code output
         )
 
-        result_text = response.choices[0].message.content
-        usage = response.usage
-
         logger.info(
             "claude_code_called",
             mode=mode,
             language=language,
-            prompt_tokens=usage.prompt_tokens if usage else 0,
-            completion_tokens=usage.completion_tokens if usage else 0,
+            prompt_tokens=llm_response.prompt_tokens,
+            completion_tokens=llm_response.completion_tokens,
         )
 
         return {
             "status": "success",
-            "response": result_text,
-            "model": response.model,
+            "response": llm_response.content,
+            "model": llm_response.model,
             "usage": {
-                "prompt_tokens": usage.prompt_tokens if usage else 0,
-                "completion_tokens": usage.completion_tokens if usage else 0,
-                "total_tokens": usage.total_tokens if usage else 0,
+                "prompt_tokens": llm_response.prompt_tokens,
+                "completion_tokens": llm_response.completion_tokens,
+                "total_tokens": llm_response.total_tokens,
             },
         }
 
     except ImportError:
-        return {"status": "error", "error": "litellm is not installed. Install with: pip install litellm"}
+        return {"status": "error", "error": "LLMClient is not available"}
     except Exception as e:
         logger.error("claude_code_error", mode=mode, error=str(e))
         return {"status": "error", "error": str(e)}
