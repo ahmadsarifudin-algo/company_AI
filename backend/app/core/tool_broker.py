@@ -153,7 +153,7 @@ class ToolBroker:
 
         if decision.needs_approval:
             # Non-blocking approval: create record, return pending, do NOT call handler
-            approval_result = ApprovalGate.check(
+            approval_result = await ApprovalGate.check(
                 trace_id=ctx.trace_id,
                 task_id=ctx.task_id,
                 agent_name=ctx.agent_name,
@@ -163,6 +163,8 @@ class ToolBroker:
                 risk_level=policy_ctx.risk_level,
                 policy_reason=decision.reason,
                 required_approvers=decision.obligations.notify_roles if decision.obligations else None,
+                tool_name=tool_name,
+                tool_args=args,
             )
 
             logger.info(
