@@ -134,3 +134,49 @@ class MessageGateway:
             content_len=len(msg.content),
         )
         return msg
+
+    @staticmethod
+    def from_telegram(payload: dict) -> UnifiedMessage:
+        """Parse incoming Telegram Bot API Update payload.
+
+        Args:
+            payload: Telegram Update object with 'message' key.
+        """
+        tg_message = payload.get("message", {})
+        from_user = tg_message.get("from", {})
+        chat = tg_message.get("chat", {})
+
+        # Collect photo/document attachments
+        attachments: list[str] = []
+        if tg_message.get("photo"):
+            # Telegram sends array of photo sizes, take largest
+            largest = tg_message["photo"][-1]
+            attachments.append(f"tg_file:{largest.get('file_id', '')}")
+        if tg_message.get("document"):
+            attachments.append(f"tg_file:{tg_message['document'].get('file_id', '')}")
+
+        msg = UnifiedMessage(
+            id=f"msg_{uuid4().hex[:12]}",
+            channel="telegram",
+            sender=str(chat.get("id", "")),
+            sender_name=(
+                f"{from_user.get('first_name', '')} {from_user.get('last_name', '')}".strip()
+                or from_user.get("username", "")
+            ),
+            content=tg_message.get("text", tg_message.get("caption", "")),
+            attachments=attachments,
+            metadata={
+                "telegram_message_id": tg_message.get("message_id", ""),
+                "telegram_chat_type": chat.get("type", ""),
+                "telegram_user_id": from_user.get("id", ""),
+                "telegram_username": from_user.get("username", ""),
+            },
+        )
+        logger.info(
+            "gateway_telegram_received",
+            msg_id=msg.id,
+            sender=msg.sender,
+            content_len=len(msg.content),
+        )
+        return msg
+

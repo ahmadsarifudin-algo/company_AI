@@ -68,6 +68,8 @@ ROUTING_RULES: list[dict[str, Any]] = [
      "tools": ["send_email"]},
     {"keywords": ["whatsapp", "wa", "kirim wa"], "department": "_shared", "agent": "_caller",
      "tools": ["send_whatsapp"]},
+    {"keywords": ["telegram", "tg", "kirim telegram"], "department": "_shared", "agent": "_caller",
+     "tools": ["send_telegram"]},
     {"keywords": ["meeting", "schedule", "jadwal", "rapat"], "department": "_shared", "agent": "_caller",
      "tools": ["create_meeting"]},
     {"keywords": ["search", "cari", "find", "query"], "department": "_shared", "agent": "_caller",

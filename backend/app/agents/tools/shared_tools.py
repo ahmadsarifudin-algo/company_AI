@@ -42,6 +42,7 @@ from app.agents.tools.terminal_tool import (
     terminal_script_handler,
 )
 from app.agents.tools.whatsapp_tool import send_whatsapp_handler
+from app.agents.tools.telegram_tool import send_telegram_handler
 from app.core.tool_registry import RiskLevel, ToolRegistry
 
 
@@ -97,6 +98,29 @@ def register_shared_tools() -> None:
                     "media_url": {"type": "string", "description": "Optional media URL"},
                 },
                 "required": ["to", "message"],
+            },
+        },
+        {
+            "name": "send_telegram",
+            "description": (
+                "Send a Telegram message via Bot API. "
+                "Can include text with HTML/Markdown formatting and photos."
+            ),
+            "handler": send_telegram_handler,
+            "risk_level": RiskLevel.HIGH,
+            "departments": ["*"],
+            "roles": ["*"],
+            "has_egress": True,
+            "egress_domains": ["api.telegram.org"],
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "chat_id": {"type": "string", "description": "Target chat ID or @channel_username"},
+                    "message": {"type": "string", "description": "Message text"},
+                    "parse_mode": {"type": "string", "description": "Optional: HTML or Markdown"},
+                    "photo_url": {"type": "string", "description": "Optional photo URL"},
+                },
+                "required": ["chat_id", "message"],
             },
         },
 
