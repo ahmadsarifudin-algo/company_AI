@@ -389,11 +389,27 @@ class TaskOrchestrator:
             # ── 3. Call LLM (with tools + execution loop) ────
             user_content = task.message.content
 
+            # ── Guard rail: input length cap ──
+            MAX_INPUT_LENGTH = 4000
+            if len(user_content) > MAX_INPUT_LENGTH:
+                logger.warning(
+                    "input_truncated",
+                    task_id=task.task_id,
+                    original_len=len(user_content),
+                    max_len=MAX_INPUT_LENGTH,
+                )
+                user_content = user_content[:MAX_INPUT_LENGTH] + "\n[... truncated]"
+
             # Build conversation history from session
             history_messages = []
             if session and len(session.history) > 1:
                 for msg in session.history[:-1]:
                     history_messages.append(msg)
+
+            # ── Guard rail: history truncation ──
+            MAX_HISTORY_MESSAGES = 20
+            if len(history_messages) > MAX_HISTORY_MESSAGES:
+                history_messages = history_messages[-MAX_HISTORY_MESSAGES:]
 
             # Initial LLM call
             llm_response = await cls._call_llm_with_fallback(
