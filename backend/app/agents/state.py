@@ -31,6 +31,8 @@ class AgentState(TypedDict):
         human_feedback: Set when a human provides approval/rejection at a checkpoint.
         status: Current execution status.
         result: Final output of the agent execution.
+        trace_id: Workflow-scoped trace ID for end-to-end correlation.
+        span_id: Step-scoped span ID within the trace.
     """
 
     messages: Annotated[list[AnyMessage], operator.add]
@@ -49,3 +51,6 @@ class AgentState(TypedDict):
     human_feedback: str | None
     status: str  # "pending" | "running" | "waiting_approval" | "completed" | "failed"
     result: dict[str, Any] | None
+    trace_id: str  # workflow-scoped trace ID
+    span_id: str  # step-scoped span ID
+

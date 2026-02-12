@@ -2,11 +2,15 @@
 BaseAgent — Abstract base class for all enterprise agents.
 
 Every specialist agent (Tech, Finance, HR, etc.) inherits from this class.
-Provides:
-- LiteLLM model selection by tier
-- Rate limiting (tool calls, tokens, execution time)
-- Loop detection (repeated similar tool calls)
-- Standard execution pipeline
+
+IMPORTANT — Single Chokepoint Architecture:
+  Agents may ONLY interact with external systems through 3 injected gateways:
+  - self._llm    → LLMClient  (all LLM calls)
+  - self._broker → ToolBroker (all tool executions)
+  - self._dal    → DataAccessLayer (all data access)
+
+  Direct imports of httpx, requests, psycopg, or sqlalchemy in agent code
+  are FORBIDDEN and will be caught by CI lint checks.
 """
 
 import hashlib
@@ -15,24 +19,15 @@ from abc import ABC, abstractmethod
 from collections import Counter
 from typing import Any
 
-import httpx
 import structlog
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from app.agents.state import AgentState
 from app.core.config import get_settings
+from app.core.llm_client import AgentContext, LLMClient, LLMResponse
 
 logger = structlog.get_logger()
 settings = get_settings()
-
-# ── Model routing by tier ────────────────────────
-TIER_MODEL_MAP = {
-    "nano": "gpt-4o-mini",
-    "standard": "claude-3-5-sonnet-20241022",
-    "advanced": "claude-3-opus-20240229",
-    "code": "deepseek/deepseek-coder",
-    "vision": "gpt-4o",
-}
 
 
 class RateLimitExceeded(Exception):
@@ -59,8 +54,12 @@ class BaseAgent(ABC):
 
     Subclasses must implement:
         - get_system_prompt() -> str
-        - get_tools() -> list[dict]
         - process(state: AgentState) -> AgentState
+
+    Agents interact with the world ONLY through:
+        - self.call_llm()  → routes to LLMClient
+        - self.call_tool() → routes to ToolBroker
+        - self._dal        → DataAccessLayer (for direct DB if needed)
     """
 
     def __init__(
@@ -70,12 +69,20 @@ class BaseAgent(ABC):
         department: str,
         tier: str = "standard",
         config: dict[str, Any] | None = None,
+        llm_client: LLMClient | None = None,
+        tool_broker: "ToolBroker | None" = None,
+        dal: "DataAccessLayer | None" = None,
     ):
         self.agent_id = agent_id
         self.name = name
         self.department = department
         self.tier = tier
         self.config = config or {}
+
+        # ── Injected chokepoint gateways ──
+        self._llm = llm_client
+        self._broker = tool_broker
+        self._dal = dal
 
         # Rate limiting defaults (can be overridden per-agent via config)
         self.max_tool_calls: int = int(
@@ -97,26 +104,26 @@ class BaseAgent(ABC):
 
         self.log = logger.bind(agent=self.name, department=self.department)
 
-    @property
-    def model_name(self) -> str:
-        """Get the LLM model name based on this agent's tier."""
-        return TIER_MODEL_MAP.get(self.tier, TIER_MODEL_MAP["standard"])
+    def get_context(self, task_id: str = "", trace_id: str = "") -> AgentContext:
+        """Create an AgentContext for this agent.
 
-    @property
-    def litellm_url(self) -> str:
-        """LiteLLM proxy URL for API calls."""
-        return f"{settings.LITELLM_PROXY_URL}/v1/chat/completions"
+        Used by call_llm() and call_tool() for tracing and policy.
+        """
+        return AgentContext(
+            agent_id=self.agent_id,
+            agent_name=self.name,
+            department=self.department,
+            tier=self.tier,
+            role="agent",
+            task_id=task_id,
+            trace_id=trace_id or "",
+        )
 
     # ── Abstract methods (must be implemented by subclasses) ──
 
     @abstractmethod
     def get_system_prompt(self) -> str:
         """Return the system prompt for this agent."""
-        ...
-
-    @abstractmethod
-    def get_tools(self) -> list[dict]:
-        """Return the tool definitions available to this agent."""
         ...
 
     @abstractmethod
@@ -128,55 +135,74 @@ class BaseAgent(ABC):
         """
         ...
 
-    # ── LLM Interaction ──────────────────────────
+    # ── LLM Interaction (via LLMClient chokepoint) ───
 
     async def call_llm(
         self,
         messages: list[dict[str, str]],
         tools: list[dict] | None = None,
         temperature: float = 0.7,
-    ) -> dict[str, Any]:
-        """Call LLM via LiteLLM proxy with rate limiting and cost tracking.
+        ctx: AgentContext | None = None,
+    ) -> LLMResponse:
+        """Call LLM via the LLMClient chokepoint.
+
+        All budget, audit, and tracing controls are enforced by LLMClient.
 
         Args:
             messages: List of message dicts with 'role' and 'content'.
             tools: Optional tool definitions for function calling.
             temperature: Sampling temperature.
+            ctx: Optional explicit AgentContext (auto-created if not provided).
 
         Returns:
-            LiteLLM response dict with 'choices' and 'usage'.
+            Structured LLMResponse with content, tokens, cost.
 
         Raises:
-            RateLimitExceeded: If token budget is exceeded.
+            RuntimeError: If LLMClient is not injected.
         """
-        payload: dict[str, Any] = {
-            "model": self.model_name,
-            "messages": messages,
-            "temperature": temperature,
-        }
-        if tools:
-            payload["tools"] = tools
+        if self._llm is None:
+            from app.core.llm_client import get_llm_client
+            self._llm = get_llm_client()
 
-        self.log.info("calling_llm", model=self.model_name, msg_count=len(messages))
+        if ctx is None:
+            ctx = self.get_context()
 
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            response = await client.post(
-                self.litellm_url,
-                json=payload,
-                headers={
-                    "Authorization": f"Bearer {settings.LITELLM_MASTER_KEY}",
-                    "Content-Type": "application/json",
-                },
-            )
-            response.raise_for_status()
-            result = response.json()
+        return await self._llm.call(ctx, messages, tools, temperature)
 
-        # Track token usage
-        usage = result.get("usage", {})
-        tokens_used = usage.get("total_tokens", 0)
-        self.log.info("llm_response", tokens=tokens_used, model=self.model_name)
+    # ── Tool Execution (via ToolBroker chokepoint) ───
 
-        return result
+    async def call_tool(
+        self,
+        tool_name: str,
+        args: dict[str, Any],
+        ctx: AgentContext | None = None,
+    ) -> "ToolResult":
+        """Execute a tool via the ToolBroker chokepoint.
+
+        All registry, policy, egress, and sandbox checks are enforced
+        by ToolBroker. Agents cannot bypass this.
+
+        Args:
+            tool_name: Name of the registered tool.
+            args: Arguments to pass to the tool handler.
+            ctx: Optional explicit AgentContext.
+
+        Returns:
+            ToolResult with output, success status, and artifacts.
+
+        Raises:
+            ToolNotFound: If tool is not in the registry.
+            ToolAccessDenied: If this agent can't use the tool.
+            RuntimeError: If ToolBroker is not injected.
+        """
+        if self._broker is None:
+            from app.core.tool_broker import get_tool_broker
+            self._broker = get_tool_broker()
+
+        if ctx is None:
+            ctx = self.get_context()
+
+        return await self._broker.execute(ctx, tool_name, args)
 
     # ── Rate Limiting ────────────────────────────
 
@@ -246,6 +272,7 @@ class BaseAgent(ABC):
             "agent_execution_start",
             task=state["current_task"],
             task_id=state["task_id"],
+            trace_id=state.get("trace_id", ""),
         )
 
         try:
@@ -282,6 +309,7 @@ class BaseAgent(ABC):
                 elapsed_ms=int(elapsed * 1000),
                 tool_calls=state["tool_call_count"],
                 tokens=state["token_usage"],
+                trace_id=state.get("trace_id", ""),
             )
 
         return state

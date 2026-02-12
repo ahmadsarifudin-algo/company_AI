@@ -2,6 +2,7 @@
 Multi-Agentic AI Enterprise OS — Dependency Injection
 
 Provides database sessions, current authenticated user, and shared dependencies.
+Includes the Single Chokepoint layer: LLMClient, ToolBroker, DataAccessLayer.
 """
 
 from typing import Annotated, AsyncGenerator
@@ -75,6 +76,30 @@ async def get_current_user(
     return user
 
 
-# Type aliases for cleaner route signatures
+# ── Single Chokepoint Dependencies ───────────
+
+def get_llm_client():
+    """Get the singleton LLMClient instance."""
+    from app.core.llm_client import get_llm_client as _get
+    return _get()
+
+
+def get_tool_broker():
+    """Get the singleton ToolBroker instance."""
+    from app.core.tool_broker import get_tool_broker as _get
+    return _get()
+
+
+def get_dal(db: AsyncSession = Depends(get_db)):
+    """Get a DataAccessLayer backed by the current DB session."""
+    from app.core.data_access import DataAccessLayer
+    return DataAccessLayer(db)
+
+
+# ── Type Aliases ─────────────────────────────
 DbSession = Annotated[AsyncSession, Depends(get_db)]
 CurrentUser = Annotated["User", Depends(get_current_user)]
+LLMDep = Annotated["LLMClient", Depends(get_llm_client)]
+BrokerDep = Annotated["ToolBroker", Depends(get_tool_broker)]
+DALDep = Annotated["DataAccessLayer", Depends(get_dal)]
+
