@@ -139,7 +139,7 @@ class TaskOrchestrator:
         if chat_type in ("group", "supergroup"):
             group_id = message.sender  # chat_id is the group
 
-        session = SessionManager.get_or_create(
+        session = await SessionManager.get_or_create(
             channel=message.channel,
             peer_id=message.sender,
             agent=routing.agent,
@@ -149,6 +149,7 @@ class TaskOrchestrator:
 
         # Add user message to session history
         session.add_message("user", message.content)
+        await SessionManager.save_session(session)
 
         task = OrchestrationTask(
             task_id=task_id,
@@ -241,6 +242,7 @@ class TaskOrchestrator:
 
                 if session:
                     session.add_message("assistant", task.agent_response)
+                    await SessionManager.save_session(session)
 
                 logger.info(
                     "orchestration_task_completed",
@@ -395,6 +397,7 @@ class TaskOrchestrator:
             # Save assistant response to session history
             if session:
                 session.add_message("assistant", task.agent_response)
+                await SessionManager.save_session(session)
 
             logger.info(
                 "orchestration_task_completed",
