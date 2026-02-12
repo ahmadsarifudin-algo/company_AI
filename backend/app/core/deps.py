@@ -131,3 +131,37 @@ LLMDep = Annotated["LLMClient", Depends(get_llm_client)]
 BrokerDep = Annotated["ToolBroker", Depends(get_tool_broker)]
 DALDep = Annotated["DataAccessLayer", Depends(get_dal)]
 
+
+# ── Role-Based Access Control ────────────────
+ROLE_HIERARCHY = {"admin": 4, "manager": 3, "lead": 2, "contributor": 1}
+
+
+def require_role(min_role: str):
+    """Factory: returns a FastAPI dependency that enforces a minimum role.
+
+    Usage:
+        @router.get("/admin-only", dependencies=[Depends(require_role("admin"))])
+        async def admin_only(user: CurrentUser): ...
+    """
+    min_level = ROLE_HIERARCHY.get(min_role, 0)
+
+    async def _check(
+        user=Depends(get_current_user),
+    ):
+        user_level = ROLE_HIERARCHY.get(user.role, 0)
+        if user_level < min_level:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Requires {min_role} role or higher (your role: {user.role})",
+            )
+        return user
+
+    return _check
+
+
+# Convenience aliases
+AdminOnly = Annotated["User", Depends(require_role("admin"))]
+ManagerUp = Annotated["User", Depends(require_role("manager"))]
+LeadUp = Annotated["User", Depends(require_role("lead"))]
+
+

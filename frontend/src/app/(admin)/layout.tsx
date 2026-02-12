@@ -5,7 +5,16 @@ import { usePathname } from 'next/navigation';
 import AuthGuard from '@/components/AuthGuard';
 import { useAuth } from '@/lib/auth';
 
-const NAV_ITEMS = [
+const ROLE_LEVEL: Record<string, number> = { admin: 4, manager: 3, lead: 2, contributor: 1 };
+
+interface NavItem {
+    label: string;
+    href: string;
+    icon: React.ReactNode;
+    minRole?: string; // minimum role to see this item
+}
+
+const NAV_ITEMS: NavItem[] = [
     {
         label: 'Overview',
         href: '/',
@@ -76,6 +85,7 @@ const NAV_ITEMS = [
                 <path d="M16 3.13a4 4 0 010 7.75" />
             </svg>
         ),
+        minRole: 'manager',
     },
     {
         label: 'Settings',
@@ -86,6 +96,7 @@ const NAV_ITEMS = [
                 <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z" />
             </svg>
         ),
+        minRole: 'admin',
     },
 ];
 
@@ -164,23 +175,30 @@ export default function AdminLayout({
                         >
                             Navigation
                         </div>
-                        {NAV_ITEMS.map((item) => {
-                            const isActive =
-                                item.href === '/'
-                                    ? pathname === '/'
-                                    : pathname.startsWith(item.href);
-                            return (
-                                <Link
-                                    key={item.href}
-                                    href={item.href}
-                                    className={`sidebar-link ${isActive ? 'active' : ''}`}
-                                    style={{ marginBottom: 2 }}
-                                >
-                                    {item.icon}
-                                    {item.label}
-                                </Link>
-                            );
-                        })}
+                        {NAV_ITEMS
+                            .filter((item) => {
+                                if (!item.minRole) return true;
+                                const userLevel = ROLE_LEVEL[user?.role || ''] || 0;
+                                const requiredLevel = ROLE_LEVEL[item.minRole] || 0;
+                                return userLevel >= requiredLevel;
+                            })
+                            .map((item) => {
+                                const isActive =
+                                    item.href === '/'
+                                        ? pathname === '/'
+                                        : pathname.startsWith(item.href);
+                                return (
+                                    <Link
+                                        key={item.href}
+                                        href={item.href}
+                                        className={`sidebar-link ${isActive ? 'active' : ''}`}
+                                        style={{ marginBottom: 2 }}
+                                    >
+                                        {item.icon}
+                                        {item.label}
+                                    </Link>
+                                );
+                            })}
                     </nav>
 
                     {/* User info + Logout */}

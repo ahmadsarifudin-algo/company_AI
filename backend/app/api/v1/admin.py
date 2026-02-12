@@ -12,7 +12,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, select, text, case, literal_column
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_db
+from app.core.deps import get_db, CurrentUser, AdminOnly, ManagerUp
 from app.models.agent import Agent
 from app.models.audit import AuditEvent
 from app.models.prompt_history import PromptHistory
@@ -27,6 +27,7 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 
 @router.get("/dashboard")
 async def get_dashboard(
+    user: CurrentUser,
     hours: int = Query(24, ge=1, le=168),
     db: AsyncSession = Depends(get_db),
 ):
@@ -968,6 +969,7 @@ async def sync_agent_prompts(db: AsyncSession = Depends(get_db)):
 
 @router.get("/users")
 async def list_users(
+    user: ManagerUp,
     department: str | None = None,
     role: str | None = None,
     db: AsyncSession = Depends(get_db),
@@ -1008,6 +1010,7 @@ async def list_users(
 
 @router.post("/users", status_code=201)
 async def create_user(
+    caller: AdminOnly,
     data: dict,
     db: AsyncSession = Depends(get_db),
 ):
@@ -1077,6 +1080,7 @@ async def create_user(
 
 @router.delete("/users/{user_id}")
 async def deactivate_user(
+    caller: AdminOnly,
     user_id: str,
     db: AsyncSession = Depends(get_db),
 ):
