@@ -2,7 +2,7 @@
 ## Multi-Agentic AI Enterprise OS
 
 **Last Updated**: 12 Feb 2026  
-**Status**: Phase 1-3 Complete ✅ | Architecture Hardening Planned 🔜
+**Status**: Phase 1-3 ✅ | Hardening 100% ✅ | Phase 4a Department Agents ✅ (34 agents, 25 tools)
 
 ---
 
@@ -16,11 +16,11 @@ gantt
     Phase 1 - Infrastructure     :done, p1, 2026-02-08, 2d
     Phase 2 - Agent Runtime      :done, p2, after p1, 2d
     Phase 3 - Knowledge/RAG      :done, p3, after p2, 2d
-    section In Progress 🔜
-    Architecture Hardening       :active, ah, after p3, 35d
+    Hardening Mod 0-9           :done, ah1, after p3, 5d
+    Phase 4a - Dept Agents (4)   :done, p4a, after ah1, 2d
     section Planned
-    Phase 4 - Specialist Agents  :p4, after ah, 21d
-    Phase 5-8 - Dashboard/Admin/Live :p5, after p4, 42d
+    Phase 4b - Dept Agents (3)   :p4b, after p4a, 7d
+    Phase 5-8 - Dashboard/Admin/Live :p5, after p4b, 42d
 ```
 
 | Phase | Status | Scope |
@@ -28,8 +28,9 @@ gantt
 | **Phase 1** | ✅ Done | Infrastructure, Auth, DB, API skeleton |
 | **Phase 2** | ✅ Done | Agent runtime, LangGraph supervisor, audit |
 | **Phase 3** | ✅ Done | RAG pipeline, pgvector, agent memory |
-| **Hardening** | 🔜 Next | Single Chokepoint, ABAC, Hash Chain Audit, Budget |
-| **Phase 4** | ⬜ | 7 department specialist agents (63 total) |
+| **Hardening 0-9** | ✅ Done | Chokepoint, ABAC, Contracts, Audit, Tracing, Budget, Resilience, Workflow, Tests |
+| **Phase 4a** | ✅ Done | 4 departments: Tech (11), Finance (9), HR (8), Sales (6) — 34 agents, 25 tools |
+| **Phase 4b** | ⬜ | 3 departments: Operations, Legal, Marketing |
 | **Phase 5-8** | ⬜ | Dashboard, Admin, Testing, Go Live |
 
 ---
@@ -87,9 +88,9 @@ gantt
 
 ---
 
-## 🔜 Architecture Hardening Plan
+## ✅ Architecture Hardening — Phase 3.5 (All 10 Modules Complete)
 
-> Production-grade security built on **Single Chokepoint** principle.
+> Production-grade security built on **Single Chokepoint** principle. **+2,579 lines of control plane code across 11 files.**
 
 ### Architecture
 
@@ -106,50 +107,78 @@ graph TB
     subgraph "Control Plane"
         TR[ToolRegistry] & PE[PolicyEngine] & BE[BudgetEnforcer] & AU[AuditService]
     end
+    subgraph "Resilience"
+        CB[CircuitBreaker] & RP[RetryPolicy] & DLQ[DeadLetterQueue]
+    end
 
     A -->|call_tool| TB
     A -->|call_llm| LC
     A -->|read/write| DAL
     TB & LC & DAL --> TR & PE & BE & AU
+    LC --> CB & RP
+    RP --> DLQ
 ```
 
-### 9 Modules Planned (26 files)
+### Module Completion Status
 
-| # | Module | Key Deliverables |
-|---|--------|-----------------|
-| 0 | **Single Chokepoint** | LLMClient, ToolBroker, DataAccessLayer — 3 mandatory gateways |
-| 1 | **Tool Registry** | Static allowlist, sandbox, network egress control |
-| 2 | **ABAC Policy Engine** | Policy rules (YAML), PII protection, field masking |
-| 3 | **Agent Contracts** | AgentInputSchema, AgentOutputSchema, ApprovalGate, IdempotencyGuard |
-| 4 | **Audit Hash Chain** | Event-sourcing, SHA-256 chain, tamper detection |
-| 5 | **Observability** | Trace IDs (end-to-end), metrics, admin dashboard |
-| 6 | **Atomic Budget** | Redis Lua reservation, concurrency-safe, soft/hard limits |
-| 7 | **Resilience** | Retry taxonomy, DLQ, circuit breaker, idempotent side-effects |
-| 8 | **Reference Workflow** | Finance invoice: draft → review → approval → finalize |
+> Modules 0-9 below correspond to **Phase 3.5.0–3.5.9** in [IMPLEMENTATION_ROADMAP.md](file:///c:/Users/sarif/Documents/project_antigravity/company_AI/IMPLEMENTATION_ROADMAP.md).
 
-### Definition of Done
-- ✅ All tool/LLM/DB calls through gateways only
-- ✅ Unknown tools 100% denied + audited
-- ✅ PII requires ticket + approval (enforced by DAL)
-- ✅ Hash chain per trace verifiable
-- ✅ `trace_id` in request, response, logs, audit, queue
-- ✅ Budget atomic under concurrency (100 parallel test)
-- ✅ Retry + DLQ + no duplicate side-effects
-- ✅ No `import requests/httpx/psycopg` in `agents/` (CI enforced)
+| # | Module | Status | Key Files |
+|---|--------|--------|-----------|
+| 0 | **Single Chokepoint** | ✅ Done | `core/llm_client.py`, `core/tool_broker.py`, `core/data_access.py` |
+| 1 | **Tool Registry** | ✅ Done | `core/tool_registry.py`, `core/sandbox.py` |
+| 2 | **ABAC Policy Engine** | ✅ Done | `core/policy_engine.py`, `core/resource_classification.py`, `policies/default.yaml` |
+| 3 | **Agent Contracts** | ✅ Done | `agents/contracts.py`, `core/approval_gate.py` |
+| 4 | **Audit Hash Chain** | ✅ Done | `models/audit.py` (+12 cols), `services/audit_service.py` |
+| 5 | **Observability** | ✅ Done | `core/tracing.py`, `core/metrics.py` |
+| 6 | **Atomic Budget** | ✅ Done | `core/budget.py` (Redis Lua scripts) |
+| 7 | **Resilience** | ✅ Done | `core/resilience.py` |
+| 8 | **Reference Workflow** | ✅ Done | `agents/workflows/finance_invoice.py`, `api/v1/workflows.py` |
+| 9 | **Test Suite** | ✅ Done | `tests/test_golden_tasks.py`, `test_policies.py`, `test_pii.py`, `test_chaos.py`, `test_static.py` |
 
 ---
 
-## 📁 Current Codebase (39 Python files)
+## ✅ Phase 4a: Department Agents (34 Agents, 25 Tools)
+
+| Department | Agents | Tools | Key Capabilities |
+|-----------|--------|-------|-------------------|
+| **Tech** | 11 | 10 | PRD, HLD/LLD, code gen, CI/CD, monitoring, security scan |
+| **Finance** | 9 | 5 | Accounting, budget, forecasting, audit, tax (PPh/PPN) |
+| **HR** | 8 | 5 | Recruitment, payroll, compliance (UU Ketenagakerjaan), BPJS |
+| **Sales** | 6 | 5 | Lead scoring, deal intel, pricing, contract review |
+
+```
+backend/app/agents/departments/
+├── tech/       (supervisor, product_analyst, architect, backend_engineer,
+│               frontend_engineer, qa, devops, sre, security,
+│               data_engineer, technical_writer, tools)
+├── finance/    (supervisor, accounting, budget_planning, forecasting,
+│               audit, risk_compliance, treasury, invoicing, tax, tools)
+├── hr/         (supervisor, recruitment, onboarding, payroll, performance,
+│               compliance, training, benefits, tools)
+└── sales/      (supervisor, lead_scoring, deal_intelligence,
+                sales_forecasting, pricing, contract_review, tools)
+```
+
+---
+
+## 📁 Current Codebase (~95 Python files)
 
 ```
 backend/app/
 ├── main.py, worker.py, seed.py
-├── core/     (config, deps, security)
-├── models/   (user, agent, task, audit, knowledge, base)
+├── core/     (16 files: config, deps, security, policy_engine, resource_classification,
+│             approval_gate, tracing, metrics, budget, resilience,
+│             llm_client, tool_broker, data_access, tool_registry, sandbox)
+├── models/   (user, agent, task, audit (+12 hash chain cols), knowledge, base)
 ├── schemas/  (auth, agent, task, execution, knowledge)
-├── api/v1/   (router, auth, agents, tasks, execution, knowledge, health)
-├── agents/   (state, base_agent, supervisor)
+├── api/v1/   (router, auth, agents, tasks, execution, knowledge, health, workflows)
+├── agents/   (state, base_agent, supervisor, contracts, workflows/)
+│   └── departments/  (43 files: tech/, finance/, hr/, sales/)
 └── services/ (agent_executor, audit_service, knowledge_service, memory_service)
+backend/policies/
+└── default.yaml  (8 ABAC rules)
+backend/tests/  (5 test files, ~65 tests)
 ```
 
 ---
@@ -171,6 +200,12 @@ backend/app/
 ## 🔗 Git History
 | Commit | Description |
 |--------|-------------|
+| `945f239` | Phase 4a complete — all 4 departments in IMPLEMENTATION_ROADMAP |
+| `98ee376` | Merge Sales Department (6 agents + 5 tools) |
+| `564b688` | Merge HR Department (8 agents + 5 tools) |
+| `b501300` | Merge Finance Department (9 agents + 5 tools) |
+| `ba45278` | Merge Tech Department (11 agents + 10 tools) |
+| `be3332d` | Architecture Hardening Modules 0-7 (+2,579 lines, 11 files) |
 | `9fe47a8` | Add Project Progress Report |
 | `8d7fec1` | Fix embedding model alias |
 | `6397327` | Fix email-validator + knowledge DI |
