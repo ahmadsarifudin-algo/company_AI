@@ -307,51 +307,51 @@ gantt
 
 **Goal**: 4 core departments operational.
 
-- [ ] **4a.1 Tech Department (11 agents)**
-  - [ ] Tech Supervisor Agent (plan decomposition)
-  - [ ] Product Analyst (PRD generation → acceptance criteria)
-  - [ ] Architect Agent (HLD/LLD, API contracts)
-  - [ ] Backend Engineer (code generation via DeepSeek)
-  - [ ] Frontend Engineer (code generation)
-  - [ ] QA Agent (test plan generation, test execution)
-  - [ ] DevOps Agent (CI config, deployment prep)
-  - [ ] SRE Agent (monitoring rules, incident postmortem)
-  - [ ] Security Agent (CVE scan, dependency audit)
-  - [ ] Data Engineer (ETL pipeline design)
-  - [ ] Technical Writer (API docs, changelogs)
-  - [ ] Tools: Git API, Docker SDK, CI/CD webhooks, Jira API
+- [x] **4a.1 Tech Department (11 agents)** ✅
+  - [x] Tech Supervisor Agent (plan decomposition)
+  - [x] Product Analyst (PRD generation → acceptance criteria)
+  - [x] Architect Agent (HLD/LLD, API contracts)
+  - [x] Backend Engineer (code generation via DeepSeek)
+  - [x] Frontend Engineer (code generation)
+  - [x] QA Agent (test plan generation, test execution)
+  - [x] DevOps Agent (CI config, deployment prep)
+  - [x] SRE Agent (monitoring rules, incident postmortem)
+  - [x] Security Agent (CVE scan, dependency audit)
+  - [x] Data Engineer (ETL pipeline design)
+  - [x] Technical Writer (API docs, changelogs)
+  - [x] Tools: 10 registered (git ops, testing, Docker, security, artifact I/O)
 
-- [ ] **4a.2 Finance Department (9 agents)**
-  - [ ] Finance Supervisor
-  - [ ] Accounting Agent (ledger reconciliation)
-  - [ ] Budget Planning Agent (budget proposals)
-  - [ ] Forecasting Agent (cashflow projection)
-  - [ ] Audit Agent (internal audit simulation)
-  - [ ] Risk & Compliance Agent (regulatory checks)
-  - [ ] Treasury Agent (cash position monitoring)
-  - [ ] Invoicing Agent (invoice generation, AR/AP)
-  - [ ] Tax Agent (tax calculation, filing prep)
-  - [ ] Tools: Excel/CSV parser, accounting API, bank API
+- [x] **4a.2 Finance Department (9 agents)** ✅
+  - [x] Finance Supervisor
+  - [x] Accounting Agent (ledger reconciliation)
+  - [x] Budget Planning Agent (budget proposals)
+  - [x] Forecasting Agent (cashflow projection)
+  - [x] Audit Agent (internal audit simulation)
+  - [x] Risk & Compliance Agent (regulatory checks)
+  - [x] Treasury Agent (cash position monitoring)
+  - [x] Invoicing Agent (invoice generation, AR/AP)
+  - [x] Tax Agent (tax calculation, filing prep)
+  - [x] Tools: 5 registered (Excel, reports, ledger, tax calc, filing)
 
-- [ ] **4a.3 HR Department (8 agents)**
-  - [ ] HR Supervisor
-  - [ ] Recruitment Agent (CV screening, ranking)
-  - [ ] Onboarding Agent (checklist, contract drafts)
-  - [ ] Payroll Validation Agent (anomaly detection)
-  - [ ] Performance Analytics Agent (KPI aggregation)
-  - [ ] HR Compliance Agent (labor law checks)
-  - [ ] Training & Development Agent (skill gap analysis)
-  - [ ] Benefits Administration Agent (eligibility lookup)
-  - [ ] Tools: HRIS API, PII masking middleware
+- [x] **4a.3 HR Department (8 agents)** ✅
+  - [x] HR Supervisor
+  - [x] Recruitment Agent (CV screening, ranking)
+  - [x] Onboarding Agent (checklist, contract drafts)
+  - [x] Payroll Validation Agent (anomaly detection)
+  - [x] Performance Analytics Agent (KPI aggregation)
+  - [x] HR Compliance Agent (labor law checks — UU Ketenagakerjaan)
+  - [x] Training & Development Agent (skill gap analysis)
+  - [x] Benefits Administration Agent (BPJS, eligibility lookup)
+  - [x] Tools: 5 registered (CV screening, HRIS, contract, payroll, compliance)
 
-- [ ] **4a.4 Sales Department (6 agents)**
-  - [ ] Sales Supervisor
-  - [ ] Lead Scoring Agent (CRM score calculation)
-  - [ ] Deal Intelligence Agent (pipeline monitoring)
-  - [ ] Forecasting Agent (revenue forecast)
-  - [ ] Pricing Optimization Agent (margin analysis)
-  - [ ] Contract Review Agent (clause validation)
-  - [ ] Tools: CRM API (HubSpot/Salesforce), proposal templates
+- [x] **4a.4 Sales Department (6 agents)** ✅
+  - [x] Sales Supervisor
+  - [x] Lead Scoring Agent (MQL/SQL/SAL qualification)
+  - [x] Deal Intelligence Agent (competitive analysis, battle cards)
+  - [x] Forecasting Agent (revenue forecast, quota tracking)
+  - [x] Pricing Optimization Agent (dynamic pricing, margin analysis)
+  - [x] Contract Review Agent (risk clauses, renewal tracking)
+  - [x] Tools: 5 registered (CRM query, deal stage, proposal, quote, market)
 
 ---
 
