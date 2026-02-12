@@ -41,6 +41,18 @@ def _scope_department(query, dept_column, user, explicit_dept: str | None = None
     return query
 
 
+def _redact_for_role(event_dict: dict, user) -> dict:
+    """Redact sensitive fields in event payload based on user role."""
+    level = _ROLE_LEVEL.get(user.role, 0)
+    if level >= 4:  # admin sees all
+        return event_dict
+    sensitive_keys = ["api_key", "token", "secret", "password", "credential"]
+    for key in list(event_dict.keys()):
+        if any(s in key.lower() for s in sensitive_keys):
+            event_dict[key] = "***REDACTED***"
+    return event_dict
+
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 #  1) GET /admin/dashboard  — Overview
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -244,6 +256,15 @@ async def get_trace_detail(
     header_q = select(TraceIndex).where(TraceIndex.trace_id == trace_id)
     header = (await db.execute(header_q)).scalar_one_or_none()
 
+    # Department ownership check — non-admin/manager can only view own dept
+    if header:
+        level = _ROLE_LEVEL.get(user.role, 0)
+        if level < 3 and header.department != user.department:
+            raise HTTPException(
+                status_code=403,
+                detail="Access denied: trace belongs to another department",
+            )
+
     # Events timeline from audit_events
     events_q = (
         select(
@@ -290,7 +311,7 @@ async def get_trace_detail(
     return {
         "header": header_data,
         "events": [
-            {
+            _redact_for_role({
                 "created_at": r.created_at.isoformat() if r.created_at else None,
                 "event_type": r.event_type,
                 "agent_id": r.agent_id,
@@ -308,7 +329,7 @@ async def get_trace_detail(
                 "risk_level": r.risk_level,
                 "error_code": r.error_code,
                 "error_message_short": r.error_message_short,
-            }
+            }, user)
             for r in event_rows
         ],
         "event_count": len(event_rows),
@@ -340,6 +361,7 @@ async def list_approvals(
         .order_by(TraceIndex.last_event_at.asc())
         .limit(limit)
     )
+    query = _scope_department(query, TraceIndex.department, user)
 
     rows = (await db.execute(query)).all()
 
@@ -415,8 +437,8 @@ async def list_policy_events(
             ])
         )
 
-    if department:
-        query = query.where(AuditEvent.department == department)
+    # Department scoping — lead/contributor see own dept only
+    query = _scope_department(query, AuditEvent.department, user, department)
     if tool_name:
         query = query.where(AuditEvent.tool_name == tool_name)
 
