@@ -29,6 +29,34 @@ engine = create_async_engine(
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 
+# ── Sync Engine (for telemetry DB sink) ──────
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session, sessionmaker
+
+_sync_url = settings.DATABASE_URL.replace("+asyncpg", "").replace("postgresql+aiosqlite", "sqlite")
+if _sync_url.startswith("postgresql+asyncpg"):
+    _sync_url = _sync_url.replace("postgresql+asyncpg", "postgresql")
+elif "asyncpg" in _sync_url:
+    _sync_url = _sync_url.replace("asyncpg://", "postgresql://")
+
+# Convert async URL to sync: postgresql+asyncpg:// → postgresql://
+_sync_url = _sync_url.replace("postgresql+asyncpg", "postgresql").replace("+asyncpg", "")
+
+sync_engine = create_engine(
+    _sync_url,
+    pool_size=5,
+    max_overflow=5,
+    pool_pre_ping=True,
+)
+
+SyncSession = sessionmaker(sync_engine, class_=Session, expire_on_commit=False)
+
+
+def get_sync_session() -> Session:
+    """Return a synchronous DB session for telemetry DB sink."""
+    return SyncSession()
+
+
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
     """Yield an async database session."""
     async with async_session() as session:

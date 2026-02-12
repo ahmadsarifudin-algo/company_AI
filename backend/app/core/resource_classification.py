@@ -90,8 +90,12 @@ RESOURCE_MAP: dict[str, Sensitivity] = {
 
     # ── System / Audit ──
     "audit_logs": Sensitivity.INTERNAL,
+    "audit_events": Sensitivity.INTERNAL,
+    "trace_index": Sensitivity.INTERNAL,
+    "metrics_rollups": Sensitivity.INTERNAL,
     "users": Sensitivity.INTERNAL,
     "agents": Sensitivity.PUBLIC,
+    "prompt_history": Sensitivity.INTERNAL,
     "tasks": Sensitivity.INTERNAL,
 }
 

@@ -2,41 +2,65 @@
 
 ## High-Level System Architecture
 
-This diagram illustrates the core "Operating System" architecture used across all departments (Tech, Finance, HR, Sales, Marketing, Legal, BizDev).
+> **Updated Feb 2026**: Reflects the **Single Chokepoint** architecture (Modules 0-7). All agent side-effects flow through mandatory gateways with ABAC policy, budget enforcement, tamper-evident audit, and resilience built in.
 
 ```mermaid
 graph TD
-    User([User]) -->|Request| Gateway[Agent Gateway]
+    User([User]) -->|Request| Gateway[API Gateway + TraceMiddleware]
     
     subgraph "Core Agent System"
-        Gateway -->|Auth & RBAC| Supervisor[Supervisor Agent]
+        Gateway -->|Auth + ABAC| Supervisor[Supervisor Agent]
         Supervisor -->|Plan JSON| Queue[Work Queue]
         
         subgraph "Execution Layer"
             Queue -->|Task| Agent1[Specialist Agent A]
             Queue -->|Task| Agent2[Specialist Agent B]
             Queue -->|Task| Agent3[Specialist Agent C]
-            
-            Agent1 <-->|Execute| Sandbox[(Tool Sandbox)]
-            Agent2 <-->|Execute| Sandbox
-            Agent3 <-->|Execute| Sandbox
         end
-        
-        Agent1 -->|Output| Store[(Artifact Store)]
-        Agent2 -->|Output| Store
-        Agent3 -->|Output| Store
-    end
-    
-    subgraph "Governance & Compliance"
-        Gateway -.->|Log| Audit[(Audit Log)]
-        Supervisor -.->|Log| Audit
-        Agent1 -.->|Log| Audit
-        Agent2 -.->|Log| Audit
-        Agent3 -.->|Log| Audit
     end
 
+    subgraph "Chokepoint Gateways — All Side-Effects"
+        Agent1 & Agent2 & Agent3 -->|call_llm| LC[LLMClient]
+        Agent1 & Agent2 & Agent3 -->|call_tool| TB[ToolBroker]
+        Agent1 & Agent2 & Agent3 -->|read/write| DAL[DataAccessLayer]
+    end
+
+    subgraph "Control Plane"
+        PE[PolicyEngine — ABAC]
+        BE[BudgetEnforcer — Redis Lua]
+        AG[ApprovalGate]
+        TR[ToolRegistry + Sandbox]
+    end
+
+    subgraph "Observability & Integrity"
+        TC[TraceContext — span tree]
+        AU[AuditService — SHA-256 hash chain]
+        MC[MetricsCollector]
+        CB[CircuitBreaker + RetryPolicy]
+    end
+
+    LC & TB & DAL --> PE & BE & AG
+    LC & TB & DAL -.->|emit| AU
+    LC & TB & DAL -.-> TC & MC
+    LC --> CB
+    TB --> TR
+
+    Agent1 & Agent2 & Agent3 -->|Output| Store[(Artifact Store)]
     Store -->|Final Artifacts| User
 ```
+
+### Key Architectural Principles (Implemented ✅)
+
+| Principle | Enforcement | Module |
+|-----------|------------|--------|
+| **No Direct External Calls** | Agents use only `LLMClient`, `ToolBroker`, `DataAccessLayer` | Module 0 |
+| **Static Tool Registration** | Tools must be pre-registered in `ToolRegistry` at startup | Module 1 |
+| **ABAC Policy** | Every action evaluated: allow / deny / require_approval | Module 2 |
+| **Rigid I/O Contracts** | `AgentInputSchema` → `AgentOutputSchema` with server-derived risk | Module 3 |
+| **Tamper-Evident Audit** | SHA-256 hash chain per trace, `verify_chain_integrity()` | Module 4 |
+| **End-to-End Tracing** | `trace_id` + `span_id` in every request, log, and audit event | Module 5 |
+| **Atomic Budget** | Redis Lua reserve → call → finalize (soft + hard limits) | Module 6 |
+| **Resilience** | RetryPolicy (taxonomy-based), DLQ, CircuitBreaker | Module 7 |
 
 ## Department Specific Workflows
 

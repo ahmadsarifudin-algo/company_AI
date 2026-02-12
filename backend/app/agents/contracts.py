@@ -111,7 +111,7 @@ class AgentOutputSchema(BaseModel):
     Ensures auditability, cost tracking, and artifact management.
     """
 
-    task_id: str = Field(..., description="Matching the input task_id")
+    task_id: str = Field(default="", description="Matching the input task_id")
     status: str = Field(
         ...,
         description="Final status: completed | failed | needs_approval | timeout"

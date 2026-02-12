@@ -1,93 +1,124 @@
 """
-ArchitectAgent — Produces HLD/LLD, API contracts, and threat models.
+ArchitectAgent — HLD/LLD, API contracts, threat modelling.
 
-Responsibilities:
-- Generate High-Level Design from PRD
-- Produce Low-Level Design with component details
-- Define API contracts (OpenAPI-style)
-- Assess infrastructure impact
-- Create threat model summary
+Key goals:
+- Deterministic output: always produce an ArchitectureOutput-compatible payload
+- Telemetry: duration_ms, token deltas, span_id
+- Artifact-driven: produce artifact_id + artifact payload for dashboard rendering
 """
 
-import json
-from typing import Any
+from __future__ import annotations
 
+import json
+import uuid
 import structlog
 
 from app.agents.base_agent import BaseAgent
+from app.agents.output_schemas import ArchitectureOutput
 from app.agents.state import AgentState
+from app.core.telemetry import now_ms
 
 logger = structlog.get_logger()
 
 
 class ArchitectAgent(BaseAgent):
-    """Produces architecture design documents from PRDs."""
+    """
+    Designs system architecture: HLD, LLD, API contracts, threat model.
+    """
 
-    def get_system_prompt(self) -> str:
+    name = "architect_agent"
+    department = "tech"
+    role = "agent"
+
+    def _default_system_prompt(self) -> str:
         return (
-            "You are a Software Architect Agent in the Tech Department.\n\n"
-            "Your responsibilities:\n"
-            "1. Produce High-Level Design (HLD) from PRD\n"
-            "2. Create Low-Level Design (LLD) with component breakdown\n"
-            "3. Define API contracts in OpenAPI-style JSON\n"
-            "4. Assess infrastructure impact (new services, DB changes, scaling)\n"
-            "5. Create a threat model summary (STRIDE)\n\n"
-            "Output format (JSON):\n"
-            "{\n"
-            '  "hld": {\n'
-            '    "overview": "Architecture summary",\n'
-            '    "components": [{"name": "...", "type": "service|db|queue", "description": "..."}],\n'
-            '    "data_flow": "Description of data flow between components",\n'
-            '    "tech_stack": ["technology choices"]\n'
-            "  },\n"
-            '  "lld": {\n'
-            '    "modules": [{"name": "...", "files": ["..."], "dependencies": ["..."]}],\n'
-            '    "database_changes": [{"table": "...", "action": "create|alter", "columns": ["..."]}],\n'
-            '    "api_endpoints": [{"method": "GET|POST", "path": "/...", "request": {}, "response": {}}]\n'
-            "  },\n"
-            '  "infrastructure_impact": {"new_services": [], "scaling_notes": "..."},\n'
-            '  "threat_model": {"threats": [{"category": "STRIDE", "description": "...", "mitigation": "..."}]}\n'
-            "}\n"
-            "Respond ONLY with valid JSON."
+            "You are an Architect Agent in the Tech Department.\n\n"
+            "Responsibilities:\n"
+            "1) Create High-Level Design (HLD) with component diagrams\n"
+            "2) Create Low-Level Design (LLD) with data flow\n"
+            "3) Define API contracts and interface specifications\n"
+            "4) Produce threat models and security considerations\n\n"
+            "Return ONLY valid JSON (no markdown), with keys:\n"
+            '{"hld": {"components":[],"interfaces":[],"data_flow":[]}, '
+            '"lld": {"components":[],"interfaces":[],"data_flow":[]}, '
+            '"api_contracts": [], "threat_model": {}}\n'
         )
 
     async def process(self, state: AgentState) -> AgentState:
-        """Generate architecture design from PRD."""
+        start_ms = now_ms()
+        span_id = uuid.uuid4().hex
+
+        task_id = state.get("task_id", "")
+        trace_id = state.get("trace_id", "")
+        task_description = state.get("task_description", "")
+
         ctx = self.get_context(
-            task_id=state.get("task_id", ""),
-            trace_id=state.get("trace_id", ""),
+            task_id=task_id, trace_id=trace_id, span_id=span_id,
+            department=state.get("department", self.department),
+            role=state.get("role", self.role),
+            risk_level=state.get("risk_level", "low"),
         )
 
-        prd = state.get("artifacts", {}).get("prd", {})
-        task_desc = state.get("task_description", "")
-        context = f"Task: {task_desc}\nPRD: {json.dumps(prd, indent=2)}" if prd else task_desc
+        self._emit_lifecycle("agent_started", ctx, {
+            "agent": self.name, "task_id": task_id,
+            "trace_id": trace_id, "span_id": span_id,
+        })
 
         messages = [
             {"role": "system", "content": self.get_system_prompt()},
-            {"role": "user", "content": context},
+            {"role": "user", "content": task_description},
         ]
 
-        self.log.info("architecture_design_start", trace_id=ctx.trace_id)
         response = await self.call_llm(messages, temperature=0.3, ctx=ctx)
 
-        try:
-            design = json.loads(response.content)
-        except json.JSONDecodeError:
-            design = {"raw_response": response.content}
+        content = "" if response is None else getattr(response, "content", "") or ""
+        result = self._safe_json_loads(content)
+        result = self._validate_output(result, ArchitectureOutput)
+
+        artifact_id = f"arch_{task_id}_{span_id}"
+        artifact = {
+            "artifact_id": artifact_id,
+            "type": "tech.architect.design",
+            "created_at_ms": now_ms(),
+            "trace_id": trace_id,
+            "span_id": span_id,
+            "agent": self.name,
+            "payload": result,
+        }
 
         artifacts = dict(state.get("artifacts", {}))
-        artifacts["architecture"] = design
+        artifacts["architecture_design"] = artifact
 
-        self.log.info(
-            "architecture_design_complete",
-            trace_id=ctx.trace_id,
-            cost_usd=response.cost_usd,
+        total_tokens = int(getattr(response, "total_tokens", 0) or 0)
+        prev_tokens = int(state.get("token_usage", 0) or 0)
+
+        end_ms = now_ms()
+        duration_ms = end_ms - start_ms
+
+        backend_output = self._build_output(
+            task_id=task_id,
+            status="completed",
+            summary=result.get("summary", "Architecture design completed."),
+            artifact_id=artifact_id,
+            artifact_type=artifact["type"],
+            telemetry={"duration_ms": duration_ms, "tokens_used": total_tokens,
+                        "span_id": span_id, "trace_id": trace_id},
         )
+
+        self._emit_lifecycle("agent_completed", ctx, {
+            "agent": self.name, "task_id": task_id,
+            "duration_ms": duration_ms, "artifact_ids": [artifact_id],
+            "tokens_used": total_tokens,
+        })
 
         return {
             **state,
-            "artifacts": artifacts,
             "status": "architecture_complete",
             "current_agent": self.name,
-            "token_usage": state.get("token_usage", 0) + response.total_tokens,
+            "trace_id": trace_id,
+            "last_run_ms": end_ms,
+            "duration_ms": duration_ms,
+            "token_usage": prev_tokens + total_tokens,
+            "artifacts": artifacts,
+            "output": backend_output,
         }

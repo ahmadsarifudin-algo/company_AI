@@ -1,5 +1,6 @@
 # LiteLLM Proxy Configuration
 # Multi-Agentic AI Enterprise OS — 4-Tier Model Strategy
+# Configured for OpenAI-only (no Anthropic/DeepSeek keys)
 
 model_list:
   # ── Tier 1: Nano (9 agents) ────────────────
@@ -15,8 +16,8 @@ model_list:
   # ── Tier 2: Standard (33 agents) ──────────
   - model_name: standard
     litellm_params:
-      model: anthropic/claude-3-5-sonnet-20241022
-      api_key: os.environ/ANTHROPIC_API_KEY
+      model: openai/gpt-4o
+      api_key: os.environ/OPENAI_API_KEY
     model_info:
       tier: 2
       description: "Reports, analysis, content writing, structured output"
@@ -24,17 +25,18 @@ model_list:
 
   - model_name: standard
     litellm_params:
-      model: openai/gpt-4o
+      model: openai/gpt-4o-mini
       api_key: os.environ/OPENAI_API_KEY
     model_info:
       tier: 2
-      max_tokens: 8192
+      description: "Fallback for standard tier"
+      max_tokens: 16384
 
   # ── Tier 3: Advanced (15 agents) ──────────
   - model_name: advanced
     litellm_params:
-      model: anthropic/claude-3-opus-20240229
-      api_key: os.environ/ANTHROPIC_API_KEY
+      model: openai/gpt-4o
+      api_key: os.environ/OPENAI_API_KEY
     model_info:
       tier: 3
       description: "Orchestration, strategy, legal reasoning, architecture"
@@ -46,13 +48,14 @@ model_list:
       api_key: os.environ/OPENAI_API_KEY
     model_info:
       tier: 3
+      description: "Reasoning-heavy tasks"
       max_tokens: 4096
 
   # ── Tier 4: Code Specialist ───────────────
   - model_name: code
     litellm_params:
-      model: deepseek/deepseek-coder
-      api_key: os.environ/DEEPSEEK_API_KEY
+      model: openai/gpt-4o
+      api_key: os.environ/OPENAI_API_KEY
     model_info:
       tier: 4
       description: "Code generation and review"

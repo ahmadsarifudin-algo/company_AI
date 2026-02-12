@@ -1,78 +1,112 @@
 """
-DevOpsAgent — CI/CD configuration and deployment preparation.
+DevOpsAgent — CI/CD pipelines, Dockerfiles, deployment manifests.
 
-Responsibilities:
-- Generate CI pipeline configurations
-- Prepare deployment manifests
-- Create rollback plans
-- Deployment only via approval gate
+Key goals:
+- Deterministic output: always produce a DevOpsOutput-compatible payload
+- Telemetry: duration_ms, token deltas, span_id
+- Artifact-driven: produce artifact_id + artifact payload for dashboard rendering
 """
 
-import json
+from __future__ import annotations
 
+import json
+import uuid
 import structlog
 
 from app.agents.base_agent import BaseAgent
+from app.agents.output_schemas import DevOpsOutput
 from app.agents.state import AgentState
+from app.core.telemetry import now_ms
 
 logger = structlog.get_logger()
 
 
 class DevOpsAgent(BaseAgent):
-    """Generates CI/CD configs and deployment preparations."""
+    """Generates CI/CD configs, Dockerfiles, deployment manifests, rollback plans."""
 
-    def get_system_prompt(self) -> str:
+    name = "devops_agent"
+    department = "tech"
+    role = "agent"
+
+    def _default_system_prompt(self) -> str:
         return (
             "You are a DevOps Agent in the Tech Department.\n\n"
-            "Your responsibilities:\n"
-            "1. Generate CI/CD pipeline configurations (GitHub Actions / GitLab CI)\n"
-            "2. Create Docker / container configurations\n"
-            "3. Prepare deployment manifests (Kubernetes / Docker Compose)\n"
-            "4. Design rollback plans and blue-green strategies\n"
-            "5. NEVER deploy directly — all deployments require approval gate\n\n"
-            "Output format (JSON):\n"
-            "{\n"
-            '  "ci_config": {"filename": ".github/workflows/ci.yml", "content": "..."},\n'
-            '  "docker": {"dockerfile": "...", "compose": "..."},\n'
-            '  "deployment": {"strategy": "rolling|blue-green|canary", "manifest": "..."},\n'
-            '  "rollback_plan": {"steps": ["..."], "validation": "..."},\n'
-            '  "approval_required": true\n'
-            "}\n"
-            "Respond ONLY with valid JSON."
+            "Responsibilities:\n"
+            "1) Create CI/CD pipeline configurations\n"
+            "2) Write Dockerfiles and compose files\n"
+            "3) Generate Kubernetes/deployment manifests\n"
+            "4) Define rollback and disaster recovery plans\n\n"
+            "Return ONLY valid JSON (no markdown), with keys:\n"
+            '{"ci_config": {}, "dockerfile": "", "deployment_manifest": {}, '
+            '"rollback_plan": {}}\n'
         )
 
     async def process(self, state: AgentState) -> AgentState:
+        start_ms = now_ms()
+        span_id = uuid.uuid4().hex
+
+        task_id = state.get("task_id", "")
+        trace_id = state.get("trace_id", "")
+        task_description = state.get("task_description", "")
+
         ctx = self.get_context(
-            task_id=state.get("task_id", ""),
-            trace_id=state.get("trace_id", ""),
+            task_id=task_id, trace_id=trace_id, span_id=span_id,
+            department=state.get("department", self.department),
+            role=state.get("role", self.role),
+            risk_level=state.get("risk_level", "low"),
         )
-        arch = state.get("artifacts", {}).get("architecture", {})
-        task_desc = state.get("task_description", "")
-        context = f"Task: {task_desc}"
-        if arch:
-            infra = arch.get("infrastructure_impact", {})
-            context += f"\nInfrastructure: {json.dumps(infra)}"
+
+        self._emit_lifecycle("agent_started", ctx, {
+            "agent": self.name, "task_id": task_id,
+            "trace_id": trace_id, "span_id": span_id,
+        })
 
         messages = [
             {"role": "system", "content": self.get_system_prompt()},
-            {"role": "user", "content": context},
+            {"role": "user", "content": task_description},
         ]
 
-        self.log.info("devops_config_start", trace_id=ctx.trace_id)
         response = await self.call_llm(messages, temperature=0.2, ctx=ctx)
 
-        try:
-            devops_output = json.loads(response.content)
-        except json.JSONDecodeError:
-            devops_output = {"raw_response": response.content}
+        content = "" if response is None else getattr(response, "content", "") or ""
+        result = self._safe_json_loads(content)
+        result = self._validate_output(result, DevOpsOutput)
+
+        artifact_id = f"devops_{task_id}_{span_id}"
+        artifact = {
+            "artifact_id": artifact_id,
+            "type": "tech.devops.pipeline",
+            "created_at_ms": now_ms(),
+            "trace_id": trace_id, "span_id": span_id,
+            "agent": self.name, "payload": result,
+        }
 
         artifacts = dict(state.get("artifacts", {}))
-        artifacts["devops_config"] = devops_output
+        artifacts["devops_config"] = artifact
+
+        total_tokens = int(getattr(response, "total_tokens", 0) or 0)
+        prev_tokens = int(state.get("token_usage", 0) or 0)
+        end_ms = now_ms()
+        duration_ms = end_ms - start_ms
+
+        backend_output = self._build_output(
+            task_id=task_id,
+            status="completed",
+            summary=result.get("summary", "DevOps configuration generated."),
+            artifact_id=artifact_id, artifact_type=artifact["type"],
+            telemetry={"duration_ms": duration_ms, "tokens_used": total_tokens,
+                        "span_id": span_id, "trace_id": trace_id},
+        )
+
+        self._emit_lifecycle("agent_completed", ctx, {
+            "agent": self.name, "task_id": task_id,
+            "duration_ms": duration_ms, "artifact_ids": [artifact_id],
+            "tokens_used": total_tokens,
+        })
 
         return {
-            **state,
-            "artifacts": artifacts,
-            "status": "devops_complete",
-            "current_agent": self.name,
-            "token_usage": state.get("token_usage", 0) + response.total_tokens,
+            **state, "status": "devops_complete", "current_agent": self.name,
+            "trace_id": trace_id, "last_run_ms": end_ms,
+            "duration_ms": duration_ms, "token_usage": prev_tokens + total_tokens,
+            "artifacts": artifacts, "output": backend_output,
         }

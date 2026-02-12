@@ -1,35 +1,55 @@
-"""PerformanceAgent — KPI aggregation and performance reviews."""
-
-import json, structlog
+"""PerformanceAgent — KPI tracking, performance reviews, talent grid."""
+from __future__ import annotations
+import json, uuid, structlog
 from app.agents.base_agent import BaseAgent
+from app.agents.output_schemas import PerformanceOutput
 from app.agents.state import AgentState
+from app.core.telemetry import now_ms
 logger = structlog.get_logger()
 
 class PerformanceAgent(BaseAgent):
-    """Aggregates KPIs, generates performance reviews, maps talent."""
+    """Tracks KPIs, generates performance reviews, builds talent grids."""
+    name = "performance_agent"; department = "hr"; role = "agent"
 
-    def get_system_prompt(self) -> str:
+    def _default_system_prompt(self) -> str:
         return (
-            "You are a Performance Analytics Agent in the HR Department.\n\n"
-            "Responsibilities:\n"
-            "1. Aggregate KPIs across employees and teams\n"
-            "2. Generate performance review summaries\n"
-            "3. Identify high/low performers and talent risks\n"
-            "4. Create 9-box talent grid mapping\n"
-            "5. Recommend development plans\n\n"
-            "Output JSON: {\"kpi_summary\": {\"team\": \"\", \"metrics\": []}, "
-            "\"performance_reviews\": [], \"talent_grid\": {}, \"recommendations\": []}"
+            "You are a Performance Agent in the HR Department.\n\n"
+            "Responsibilities:\n1) Track and analyze KPIs\n"
+            "2) Generate performance review summaries\n"
+            "3) Build 9-box talent grids\n4) Recommend development plans\n\n"
+            "Return ONLY valid JSON:\n"
+            '{"kpi_summary": {}, "performance_reviews": [], "talent_grid": {}, "recommendations": []}\n'
         )
 
     async def process(self, state: AgentState) -> AgentState:
-        ctx = self.get_context(task_id=state.get("task_id", ""), trace_id=state.get("trace_id", ""))
-        messages = [{"role": "system", "content": self.get_system_prompt()},
-                    {"role": "user", "content": state.get("task_description", "")}]
-        response = await self.call_llm(messages, temperature=0.3, ctx=ctx)
-        try: result = json.loads(response.content)
-        except json.JSONDecodeError: result = {"raw_response": response.content}
-        artifacts = dict(state.get("artifacts", {}))
-        artifacts["performance_result"] = result
-        return {**state, "artifacts": artifacts, "status": "performance_complete",
-                "current_agent": self.name,
-                "token_usage": state.get("token_usage", 0) + response.total_tokens}
+        start_ms = now_ms(); span_id = uuid.uuid4().hex
+        task_id = state.get("task_id", ""); trace_id = state.get("trace_id", "")
+        ctx = self.get_context(task_id=task_id, trace_id=trace_id, span_id=span_id,
+            department=state.get("department", self.department), role=state.get("role", self.role),
+            risk_level=state.get("risk_level", "low"))
+        self._emit_lifecycle("agent_started", ctx, {"agent": self.name, "task_id": task_id,
+            "trace_id": trace_id, "span_id": span_id})
+        response = await self.call_llm([{"role": "system", "content": self.get_system_prompt()},
+            {"role": "user", "content": state.get("task_description", "")}], temperature=0.3, ctx=ctx)
+        content = "" if response is None else getattr(response, "content", "") or ""
+        result = self._safe_json_loads(content)
+        result = self._validate_output(result, PerformanceOutput)
+        artifact_id = f"perf_{task_id}_{span_id}"
+        artifact = {"artifact_id": artifact_id, "type": "hr.performance.review",
+            "created_at_ms": now_ms(), "trace_id": trace_id, "span_id": span_id,
+            "agent": self.name, "payload": result}
+        artifacts = dict(state.get("artifacts", {})); artifacts["performance"] = artifact
+        total_tokens = int(getattr(response, "total_tokens", 0) or 0)
+        prev_tokens = int(state.get("token_usage", 0) or 0)
+        end_ms = now_ms(); duration_ms = end_ms - start_ms
+        backend_output = self._build_output(
+            task_id=task_id, status="completed",
+            summary=result.get("summary", "Performance analysis completed."),
+            artifact_id=artifact_id, artifact_type=artifact["type"],
+            telemetry={"duration_ms": duration_ms, "tokens_used": total_tokens,
+                        "span_id": span_id, "trace_id": trace_id})
+        self._emit_lifecycle("agent_completed", ctx, {"agent": self.name, "task_id": task_id,
+            "duration_ms": duration_ms, "artifact_ids": [artifact_id], "tokens_used": total_tokens})
+        return {**state, "status": "performance_complete", "current_agent": self.name,
+            "trace_id": trace_id, "last_run_ms": end_ms, "duration_ms": duration_ms,
+            "token_usage": prev_tokens + total_tokens, "artifacts": artifacts, "output": backend_output}
