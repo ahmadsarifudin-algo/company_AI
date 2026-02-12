@@ -11,7 +11,7 @@ from fastapi.responses import JSONResponse
 
 import structlog
 
-from app.services.orchestration.message_gateway import MessageGateway
+from app.services.orchestration.message_gateway import MessageGateway, UnifiedMessage
 from app.services.orchestration.task_orchestrator import TaskOrchestrator
 
 logger = structlog.get_logger()
@@ -104,8 +104,11 @@ async def telegram_webhook(request: Request) -> JSONResponse:
     """Receive incoming Telegram message via Bot API webhook.
 
     Telegram sends a JSON Update object with the message content.
-    We normalize it and submit to the orchestrator.
+    ACKs immediately (< 1s) and processes in background to avoid
+    Telegram's webhook timeout (60s limit, but LLM can take 10-30s).
     """
+    import asyncio
+
     payload = await request.json()
 
     # Telegram webhook verification — ignore non-message updates
@@ -114,7 +117,7 @@ async def telegram_webhook(request: Request) -> JSONResponse:
 
     message = MessageGateway.from_telegram(payload)
 
-    # Check for approval replies
+    # Check for approval replies (fast path — no LLM needed)
     body_lower = message.content.strip().lower()
     if body_lower in ("approve", "approved", "setuju", "ya"):
         logger.info("telegram_approval_reply", sender=message.sender, decision="approved")
@@ -129,18 +132,42 @@ async def telegram_webhook(request: Request) -> JSONResponse:
             status_code=200,
         )
 
-    # Submit as new task
-    task = await TaskOrchestrator.submit(message)
+    # Fire-and-forget: ACK Telegram immediately, process in background
+    asyncio.create_task(_process_telegram_message(message))
 
-    return JSONResponse(
-        content={
-            "status": "received",
-            "task_id": task.task_id,
-            "trace_id": task.trace_id,
-            "agent": task.routing.agent,
-        },
-        status_code=200,
-    )
+    return JSONResponse(content={"status": "accepted"}, status_code=200)
+
+
+async def _process_telegram_message(message: UnifiedMessage) -> None:
+    """Background task: run orchestrator and handle errors gracefully."""
+    try:
+        task = await TaskOrchestrator.submit(message)
+        logger.info(
+            "telegram_webhook_completed",
+            task_id=task.task_id,
+            trace_id=task.trace_id,
+            agent=task.routing.agent,
+            status=task.status.value,
+        )
+    except Exception as e:
+        logger.error(
+            "telegram_webhook_background_error",
+            sender=message.sender,
+            error=str(e),
+        )
+        # Try to send fallback error reply directly
+        try:
+            from app.services.orchestration.notification_dispatcher import (
+                NotificationDispatcher,
+            )
+
+            await NotificationDispatcher.send(
+                channel="telegram",
+                recipient=message.sender,
+                content="⚠️ Sorry, something went wrong processing your message. Please try again.",
+            )
+        except Exception:
+            pass  # Last resort — can't do anything more
 
 
 @router.get("/status/{task_id}")
