@@ -2,6 +2,8 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import AuthGuard from '@/components/AuthGuard';
+import { useAuth } from '@/lib/auth';
 
 const NAV_ITEMS = [
     {
@@ -93,119 +95,142 @@ export default function AdminLayout({
     children: React.ReactNode;
 }) {
     const pathname = usePathname();
+    const { user, logout } = useAuth();
 
     return (
-        <div style={{ display: 'flex', minHeight: '100vh' }}>
-            {/* Sidebar */}
-            <aside
-                style={{
-                    width: 240,
-                    background: 'var(--bg-secondary)',
-                    borderRight: '1px solid var(--border)',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    position: 'fixed',
-                    top: 0,
-                    left: 0,
-                    bottom: 0,
-                    zIndex: 50,
-                }}
-            >
-                {/* Logo */}
-                <div
+        <AuthGuard>
+            <div style={{ display: 'flex', minHeight: '100vh' }}>
+                {/* Sidebar */}
+                <aside
                     style={{
-                        padding: '20px 16px',
-                        borderBottom: '1px solid var(--border)',
+                        width: 240,
+                        background: 'var(--bg-secondary)',
+                        borderRight: '1px solid var(--border)',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        position: 'fixed',
+                        top: 0,
+                        left: 0,
+                        bottom: 0,
+                        zIndex: 50,
                     }}
                 >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                        <div
-                            style={{
-                                width: 32,
-                                height: 32,
-                                borderRadius: 8,
-                                background: 'linear-gradient(135deg, var(--accent), #8b5cf6)',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                fontSize: 14,
-                                fontWeight: 700,
-                                color: 'white',
-                            }}
-                        >
-                            AI
-                        </div>
-                        <div>
-                            <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>
-                                Governance
-                            </div>
-                            <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                                Admin Dashboard
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                {/* Nav */}
-                <nav style={{ padding: '12px 8px', flex: 1 }}>
+                    {/* Logo */}
                     <div
                         style={{
-                            fontSize: 10,
-                            fontWeight: 600,
-                            textTransform: 'uppercase',
-                            letterSpacing: '0.08em',
-                            color: 'var(--text-muted)',
-                            padding: '8px 12px 4px',
+                            padding: '20px 16px',
+                            borderBottom: '1px solid var(--border)',
                         }}
                     >
-                        Navigation
-                    </div>
-                    {NAV_ITEMS.map((item) => {
-                        const isActive =
-                            item.href === '/'
-                                ? pathname === '/'
-                                : pathname.startsWith(item.href);
-                        return (
-                            <Link
-                                key={item.href}
-                                href={item.href}
-                                className={`sidebar-link ${isActive ? 'active' : ''}`}
-                                style={{ marginBottom: 2 }}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                            <div
+                                style={{
+                                    width: 32,
+                                    height: 32,
+                                    borderRadius: 8,
+                                    background: 'linear-gradient(135deg, var(--accent), #8b5cf6)',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    fontSize: 14,
+                                    fontWeight: 700,
+                                    color: 'white',
+                                }}
                             >
-                                {item.icon}
-                                {item.label}
-                            </Link>
-                        );
-                    })}
-                </nav>
+                                AI
+                            </div>
+                            <div>
+                                <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>
+                                    Governance
+                                </div>
+                                <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                                    Admin Dashboard
+                                </div>
+                            </div>
+                        </div>
+                    </div>
 
-                {/* Footer */}
-                <div
+                    {/* Nav */}
+                    <nav style={{ padding: '12px 8px', flex: 1 }}>
+                        <div
+                            style={{
+                                fontSize: 10,
+                                fontWeight: 600,
+                                textTransform: 'uppercase',
+                                letterSpacing: '0.08em',
+                                color: 'var(--text-muted)',
+                                padding: '8px 12px 4px',
+                            }}
+                        >
+                            Navigation
+                        </div>
+                        {NAV_ITEMS.map((item) => {
+                            const isActive =
+                                item.href === '/'
+                                    ? pathname === '/'
+                                    : pathname.startsWith(item.href);
+                            return (
+                                <Link
+                                    key={item.href}
+                                    href={item.href}
+                                    className={`sidebar-link ${isActive ? 'active' : ''}`}
+                                    style={{ marginBottom: 2 }}
+                                >
+                                    {item.icon}
+                                    {item.label}
+                                </Link>
+                            );
+                        })}
+                    </nav>
+
+                    {/* User info + Logout */}
+                    <div
+                        style={{
+                            padding: '12px 16px',
+                            borderTop: '1px solid var(--border)',
+                        }}
+                    >
+                        {user && (
+                            <div style={{ marginBottom: 8 }}>
+                                <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-primary)', lineHeight: 1.3 }}>
+                                    {user.name}
+                                </div>
+                                <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                                    {user.department} · {user.role}
+                                </div>
+                            </div>
+                        )}
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--text-muted)' }}>
+                                <div className="pulse-dot" style={{ background: 'var(--success)' }} />
+                                Online
+                            </div>
+                            <button
+                                onClick={logout}
+                                style={{
+                                    padding: '4px 10px', borderRadius: 6, fontSize: 11,
+                                    border: '1px solid var(--border)', background: 'transparent',
+                                    color: 'var(--text-muted)', cursor: 'pointer',
+                                }}
+                            >
+                                Logout
+                            </button>
+                        </div>
+                    </div>
+                </aside>
+
+                {/* Main content */}
+                <main
                     style={{
-                        padding: '12px 16px',
-                        borderTop: '1px solid var(--border)',
-                        fontSize: 11,
-                        color: 'var(--text-muted)',
+                        flex: 1,
+                        marginLeft: 240,
+                        padding: '24px 32px',
+                        minHeight: '100vh',
                     }}
                 >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <div className="pulse-dot" style={{ background: 'var(--success)' }} />
-                        System Online
-                    </div>
-                </div>
-            </aside>
-
-            {/* Main content */}
-            <main
-                style={{
-                    flex: 1,
-                    marginLeft: 240,
-                    padding: '24px 32px',
-                    minHeight: '100vh',
-                }}
-            >
-                {children}
-            </main>
-        </div>
+                    {children}
+                </main>
+            </div>
+        </AuthGuard>
     );
 }
