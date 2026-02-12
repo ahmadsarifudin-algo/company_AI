@@ -20,6 +20,26 @@ from app.models.trace_index import TraceIndex
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
+# ── Department Scoping Helper ────────────────
+_ROLE_LEVEL = {"admin": 4, "manager": 3, "lead": 2, "contributor": 1}
+
+
+def _scope_department(query, dept_column, user, explicit_dept: str | None = None):
+    """Apply department scoping to a query.
+
+    - admin/manager: see all departments (unless explicit_dept filter is set)
+    - lead/contributor: always scoped to their own department
+    """
+    level = _ROLE_LEVEL.get(user.role, 0)
+    if level >= 3:
+        # Admin/Manager can optionally filter
+        if explicit_dept:
+            query = query.where(dept_column == explicit_dept)
+    else:
+        # Lead/Contributor — always scoped to own department
+        query = query.where(dept_column == user.department)
+    return query
+
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 #  1) GET /admin/dashboard  — Overview
@@ -43,6 +63,7 @@ async def get_dashboard(
         .where(TraceIndex.last_event_at >= cutoff)
         .group_by(TraceIndex.status)
     )
+    status_q = _scope_department(status_q, TraceIndex.department, user)
     status_rows = (await db.execute(status_q)).all()
     status_counts = {row.status: row.cnt for row in status_rows}
 
@@ -78,6 +99,7 @@ async def get_dashboard(
         .select_from(TraceIndex)
         .where(TraceIndex.approval_pending == True)
     )
+    pending_q = _scope_department(pending_q, TraceIndex.department, user)
     pending_count = (await db.execute(pending_q)).scalar() or 0
 
     # D) Top errors (last N hours)
@@ -143,6 +165,7 @@ async def get_dashboard(
 
 @router.get("/traces")
 async def list_traces(
+    user: CurrentUser,
     status: Optional[str] = None,
     department: Optional[str] = None,
     risk_level: Optional[str] = None,
@@ -171,8 +194,7 @@ async def list_traces(
 
     if status:
         query = query.where(TraceIndex.status == status)
-    if department:
-        query = query.where(TraceIndex.department == department)
+    query = _scope_department(query, TraceIndex.department, user, department)
     if risk_level:
         query = query.where(TraceIndex.risk_level == risk_level)
     if approval_pending is not None:
@@ -438,6 +460,7 @@ class PromptRollbackRequest(BaseModel):
 
 @router.get("/agents")
 async def list_agents(
+    user: CurrentUser,
     department: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
 ):
@@ -458,8 +481,7 @@ async def list_agents(
         (Agent.system_prompt_override.isnot(None)).label("has_prompt_override"),
     )
 
-    if department:
-        query = query.where(Agent.department == department)
+    query = _scope_department(query, Agent.department, user, department)
 
     query = query.order_by(Agent.department, Agent.name)
     rows = (await db.execute(query)).all()
