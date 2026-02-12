@@ -26,6 +26,16 @@ class User(Base, TimestampMixin):
     invite_token_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     invite_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    # ── Communication channels ───────────────────
+    phone_whatsapp: Mapped[str | None] = mapped_column(
+        String(20), nullable=True,
+        comment="WhatsApp number e.g. +6281234567890",
+    )
+    notification_channels: Mapped[str] = mapped_column(
+        String(50), nullable=False, server_default="email",
+        comment="Comma-separated: email,whatsapp",
+    )
+
     # ── Helpers ──────────────────────────────────
 
     ROLE_HIERARCHY = {"admin": 4, "manager": 3, "lead": 2, "contributor": 1}

@@ -132,7 +132,8 @@ graph TD
 - **Sales Agents**: CRM API access via `ToolBroker` → territory-scoped by `DataAccessLayer`.
 
 ### 3.4 Security & Sandboxing
-- **Code Execution**: **E2B** or **Firecracker MicroVMs** to prevent agents from accessing host system.
+- **Code Execution**: **Docker containers** (ephemeral, resource-limited) or **Firecracker MicroVMs** to prevent agents from accessing host system.
+- **Terminal Sandbox**: Commands run in Docker with read-only root FS, CPU/memory limits, PID limits, command allowlists, and blocked patterns.
 - **Network Policy**: `NetworkPolicy` class enforces domain-level egress allowlist per tool (Implemented ✅).
 - **Data Isolation**: PostgreSQL **Row-Level Security (RLS)** per department + schema-based isolation.
 - **Secrets**: Agent never receives raw credentials. Backend proxy fetches from Vault on behalf of agent.
@@ -169,6 +170,73 @@ graph TD
 | **CircuitBreaker** | `core/resilience.py` | Half-open recovery, fallback support |
 | **RetryPolicy** | `core/resilience.py` | Taxonomy-based retry (transient=retry, policy=no-retry) |
 | **DeadLetterQueue** | `core/resilience.py` | Failed operations stored for manual replay |
+
+### 3.7 Tools Orchestration Service (Implemented ✅)
+
+> **31 shared tools** registered in `ToolRegistry`, all executing through `ToolBroker`.
+
+#### Architecture
+
+```mermaid
+graph LR
+    Agent -->|tool call| TB[ToolBroker]
+    TB -->|1. resolve| TR[ToolRegistry]
+    TB -->|2. ABAC check| PE[PolicyEngine]
+    TB -->|3. egress check| NP[NetworkPolicy]
+    TB -->|4. sandbox| TS[TaskSandbox]
+    TB -->|5. execute| TH[Tool Handler]
+    TH --> Email[Gmail / SMTP]
+    TH --> WA[WhatsApp / Twilio]
+    TH --> GCal[Google Calendar]
+    TH --> CDP[Playwright CDP]
+    TH --> LLM[LiteLLM Code Model]
+    TH --> Docker[Docker Container]
+```
+
+#### Tool Categories
+
+| Category | Tools | Risk | Backend |
+|----------|-------|------|---------|
+| **Communication** | `send_email`, `send_whatsapp`, `create_meeting` | MEDIUM | Gmail API, Twilio, Google Calendar |
+| **File & Data** | `upload_file`, `read_file`, `search_data`, `generate_report` | LOW | Google Drive, Internal DB |
+| **Browser CDP** | `browser_open/navigate/screenshot/extract/click/fill/exec_js/close` | LOW–HIGH | Playwright (Chrome/Edge/Chromium) |
+| **Web Scraping** | `scrape_page`, `scrape_multiple`, `scrape_seo`, `scrape_pricing` | MEDIUM | Playwright CDP |
+| **Claude Code** | `code_generate/review/refactor/debug/test/explain/convert/document` | LOW | LiteLLM (code model tier) |
+| **Terminal** | `terminal_exec`, `terminal_git`, `terminal_install`, `terminal_script` | HIGH | Docker sandbox containers |
+
+#### Key Files
+
+| File | Purpose |
+|------|---------|
+| `agents/tools/shared_tools.py` | Central tool registration (all 31 tools) |
+| `agents/tools/email_tool.py` | Gmail API + SMTP fallback |
+| `agents/tools/whatsapp_tool.py` | Twilio WhatsApp Business API |
+| `agents/tools/calendar_tool.py` | Google Calendar meeting scheduling |
+| `agents/tools/drive_tool.py` | Google Drive file upload/read |
+| `agents/tools/search_tool.py` | Internal DB search + report generation |
+| `agents/tools/browser_tool.py` | 8 CDP handlers with session management |
+| `agents/tools/scraper_tool.py` | 4 marketing-focused scraping handlers |
+| `agents/tools/claude_code_tool.py` | 8 AI coding handlers via LiteLLM |
+| `agents/tools/terminal_tool.py` | 4 Docker-sandboxed terminal handlers |
+| `services/tool_orchestrator.py` | Task lifecycle management |
+| `services/credential_vault.py` | Encrypted credential storage |
+| `services/notification_service.py` | Multi-channel notification routing |
+
+#### Docker Sandbox Security (Terminal Tools)
+
+All terminal commands run inside ephemeral Docker containers with:
+
+| Control | Value |
+|---------|-------|
+| Memory limit | 512 MB |
+| CPU limit | 1 core |
+| PID limit | 100 processes |
+| Timeout | 5 minutes max |
+| Root filesystem | Read-only |
+| Network | Isolated (none) by default |
+| Writable paths | `/workspace` (200 MB), `/tmp` (100 MB) |
+| Command validation | Allowlist + blocked patterns |
+| Privilege escalation | Disabled (`--security-opt no-new-privileges`) |
 
 ---
 

@@ -42,6 +42,7 @@ graph TD
 | **Dashboard UI** | ✅ Done | Next.js 14 admin dashboard — 7 pages (Overview, Agents, Traces, Approvals, Playground, Users, Settings) |
 | **User Registration** | ✅ Done | Admin-driven invite flow, SHA-256 hashed tokens, role hierarchy (admin/manager/lead/contributor) |
 | **LLM Integration** | ✅ Done | Gemini direct (gemini-2.0-flash), settings page for model config |
+| **Tools Orchestration** | ✅ Done | 31 shared tools — email, WhatsApp, calendar, search, browser CDP, scraper, Claude Code, sandboxed terminal |
 | **Login & RBAC** | 🔲 Next | Login page, AuthContext, role-based UI filtering |
 | **HITL Approval** | 🔲 Next | Human identity in approval chain, department scoping |
 
@@ -61,6 +62,65 @@ graph TD
 | **🌐 Enterprise** | 3 | Global Supervisor | Scheduling, communication, orchestration |
 
 **Total: 63 agents | 7 departments | 31 humans**
+
+---
+
+## 🔧 Tool Capabilities (31 Shared Tools)
+
+All tools execute through the **ToolBroker** chokepoint — enforcing access control, network egress policies, file sandbox, and audit logging.
+
+### Communication & Productivity
+| Tool | Risk | Description |
+|------|------|-------------|
+| `send_email` | MEDIUM | Send emails via Gmail API or SMTP fallback |
+| `send_whatsapp` | MEDIUM | Send WhatsApp messages via Twilio |
+| `create_meeting` | MEDIUM | Schedule Google Calendar meetings |
+| `upload_file` | MEDIUM | Upload files to Google Drive |
+| `read_file` | LOW | Read files from Google Drive |
+| `search_data` | LOW | Search internal database |
+| `generate_report` | LOW | Generate reports from data |
+
+### Browser Automation (CDP via Playwright)
+| Tool | Risk | Description |
+|------|------|-------------|
+| `browser_open` | LOW | Launch browser session (Chrome/Edge/Chromium) |
+| `browser_navigate` | MEDIUM | Navigate to URL with wait conditions |
+| `browser_screenshot` | LOW | Capture full-page or element screenshots |
+| `browser_extract` | LOW | Extract text, HTML, links, tables |
+| `browser_click` | MEDIUM | Click elements |
+| `browser_fill` | MEDIUM | Fill form fields |
+| `browser_exec_js` | HIGH | Execute JavaScript (requires approval) |
+| `browser_close` | LOW | Close browser session |
+
+### Web Scraping (Digital Marketing & Data Analysis)
+| Tool | Risk | Description |
+|------|------|-------------|
+| `scrape_page` | MEDIUM | Extract structured data with CSS selectors |
+| `scrape_multiple` | MEDIUM | Multi-page crawl with rate limiting |
+| `scrape_seo` | MEDIUM | SEO audit (meta, headings, links, performance) |
+| `scrape_pricing` | MEDIUM | Competitor pricing extraction |
+
+### Claude Code (AI Developer Assistant)
+| Tool | Risk | Description |
+|------|------|-------------|
+| `code_generate` | LOW | Generate production code from specs |
+| `code_review` | LOW | Review for bugs, security, performance |
+| `code_refactor` | LOW | Refactor with SOLID/DRY/KISS principles |
+| `code_debug` | LOW | Root cause analysis + fix |
+| `code_test` | LOW | Generate unit/integration tests |
+| `code_explain` | LOW | Explain code in plain language |
+| `code_convert` | LOW | Convert between languages |
+| `code_document` | LOW | Generate documentation |
+
+### Sandboxed Terminal (Docker Isolation)
+| Tool | Risk | Description |
+|------|------|-------------|
+| `terminal_exec` | HIGH | Execute commands in Docker container |
+| `terminal_git` | HIGH | Git operations (clone/pull/push/commit) |
+| `terminal_install` | HIGH | Install packages (pip/npm/apt/cargo) |
+| `terminal_script` | HIGH | Run scripts (bash/python/node/ruby) |
+
+> **Security**: HIGH-risk tools require HITL approval. All terminal commands run in ephemeral Docker containers with CPU/memory limits, read-only root FS, command allowlists, and network isolation.
 
 ---
 

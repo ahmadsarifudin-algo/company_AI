@@ -33,6 +33,12 @@ async def lifespan(app: FastAPI):
             await conn.run_sync(Base.metadata.create_all)
         print(f"🚀 {settings.APP_NAME} started in {settings.APP_ENV} mode")
         print(f"📊 Database connected: {settings.DATABASE_URL.split('@')[-1]}")
+
+    # Register shared tools (email, calendar, drive, whatsapp, search)
+    from app.agents.tools.shared_tools import register_shared_tools
+    register_shared_tools()
+    print("🔧 Shared tools registered (send_email, create_meeting, etc.)")
+
     yield
     # Shutdown
     await engine.dispose()

@@ -3,8 +3,10 @@
 from app.models.agent import Agent
 from app.models.audit import AuditEvent, AuditLog  # AuditLog = backward compat alias
 from app.models.base import Base
+from app.models.integration_credential import IntegrationCredential
 from app.models.knowledge import KnowledgeDocument
 from app.models.metrics_rollup import MetricsRollupHourly
+from app.models.notification_log import NotificationLog
 from app.models.prompt_history import PromptHistory
 from app.models.task import Task
 from app.models.trace_index import TraceIndex
@@ -21,5 +23,8 @@ __all__ = [
     "MetricsRollupHourly",
     "KnowledgeDocument",
     "PromptHistory",
+    "IntegrationCredential",
+    "NotificationLog",
 ]
+
 

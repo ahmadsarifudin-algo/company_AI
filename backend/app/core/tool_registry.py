@@ -174,6 +174,54 @@ class ToolRegistry:
         """Check if a tool is registered."""
         return name in cls._tools
 
+    @classmethod
+    def register_shared_tool(
+        cls,
+        name: str,
+        handler: ToolHandler,
+        description: str = "",
+        risk_level: RiskLevel = RiskLevel.LOW,
+        departments: list[str] | None = None,
+        roles: list[str] | None = None,
+        has_egress: bool = False,
+        egress_domains: list[str] | None = None,
+        has_file_access: bool = False,
+        parameters: dict | None = None,
+        **kwargs,
+    ) -> None:
+        """Register a shared tool (convenience wrapper for register).
+
+        Accepts keyword args matching the shared_tools.py format and
+        constructs a ToolMeta automatically.
+
+        Args:
+            name: Tool name.
+            handler: Async handler function.
+            description: Tool description.
+            risk_level: Risk classification.
+            departments: Allowed departments ("*" = all).
+            roles: Allowed roles ("*" = all).
+            has_egress: Whether tool makes external API calls.
+            egress_domains: Allowed external domains.
+            has_file_access: Whether tool reads/writes files.
+            parameters: OpenAI function calling parameter schema.
+        """
+        if cls.is_registered(name):
+            return  # Already registered
+
+        meta = ToolMeta(
+            name=name,
+            handler=handler,
+            description=description,
+            risk_level=risk_level,
+            allowed_roles=set(roles or ["*"]),
+            allowed_departments=set(departments or ["*"]),
+            has_egress=has_egress,
+            egress_domains=egress_domains or [],
+            has_file_access=has_file_access,
+        )
+        cls.register(meta)
+
 
 # ── Workflow Tool Handlers (Reference Implementation) ─
 

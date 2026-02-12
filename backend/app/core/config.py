@@ -59,6 +59,30 @@ class Settings(BaseSettings):
     # ── Agent Memory ─────────────────────────
     MEMORY_TTL: int = 86400     # Redis session TTL in seconds (24h)
 
+    # ── Email (SMTP) ─────────────────────────
+    SMTP_HOST: str = ""
+    SMTP_PORT: int = 587
+    SMTP_USER: str = ""
+    SMTP_PASSWORD: str = ""
+    SMTP_FROM: str = "noreply@company-ai.local"
+    SMTP_USE_TLS: bool = True
+
+    # ── WhatsApp (Twilio) ────────────────────
+    TWILIO_ACCOUNT_SID: str = ""
+    TWILIO_AUTH_TOKEN: str = ""
+    TWILIO_WHATSAPP_FROM: str = ""  # e.g. "whatsapp:+14155238886"
+
+    # ── Google Workspace ─────────────────────
+    GOOGLE_SERVICE_ACCOUNT_JSON: str = ""  # path to service account key
+    GOOGLE_DELEGATED_EMAIL: str = ""       # email for domain-wide delegation
+    GOOGLE_CALENDAR_ID: str = "primary"
+    GOOGLE_DRIVE_FOLDER_ID: str = ""
+
+    # ── Channels ─────────────────────────────
+    NOTIFICATION_CHANNELS: str = "email"  # "email,whatsapp"
+    CHANNEL_CALLBACK_BASE_URL: str = "http://localhost:8000"
+    ALLOWED_EMAIL_DOMAINS: str = ""  # comma-separated
+
     @property
     def allowed_origins_list(self) -> list[str]:
         return [origin.strip() for origin in self.ALLOWED_ORIGINS.split(",")]
