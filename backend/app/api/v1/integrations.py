@@ -38,7 +38,7 @@ class TestConnectionRequest(BaseModel):
 @router.get("/status")
 async def get_integration_status() -> JSONResponse:
     """Check which integration services are configured."""
-    services = ["smtp", "twilio", "google", "google_calendar", "google_drive", "google_gmail"]
+    services = ["smtp", "twilio", "telegram", "google", "google_calendar", "google_drive", "google_gmail"]
 
     status = {}
     for svc in services:
@@ -61,6 +61,8 @@ async def list_credentials() -> JSONResponse:
         ("twilio_account_sid", "twilio", True),
         ("twilio_auth_token", "twilio", True),
         ("twilio_whatsapp_from", "twilio", False),
+        ("telegram_bot_token", "telegram", True),
+        ("telegram_webhook_secret", "telegram", True),
         ("google_service_account_json", "google", True),
         ("google_delegated_email", "google", False),
         ("google_calendar_id", "google", False),
@@ -133,6 +135,8 @@ async def test_connection(req: TestConnectionRequest) -> JSONResponse:
         result = await _test_google(req.service)
     elif req.service == "twilio":
         result = await _test_twilio()
+    elif req.service == "telegram":
+        result = await _test_telegram()
     else:
         result = {"status": "unknown", "message": f"No test for {req.service}"}
 
@@ -211,3 +215,25 @@ async def _test_twilio() -> dict:
         return {"status": "error", "message": "twilio package not installed"}
     except Exception as e:
         return {"status": "error", "message": str(e)}
+
+
+async def _test_telegram() -> dict:
+    """Test Telegram Bot API connection via getMe."""
+    try:
+        import httpx
+        token = CredentialVault.get("telegram_bot_token")
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(f"https://api.telegram.org/bot{token}/getMe")
+            data = resp.json()
+            if data.get("ok"):
+                bot = data["result"]
+                return {
+                    "status": "connected",
+                    "message": f"Bot: @{bot.get('username', 'unknown')} ({bot.get('first_name', '')})",
+                }
+            return {"status": "error", "message": data.get("description", "Unknown error")}
+    except ImportError:
+        return {"status": "error", "message": "httpx package not installed"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+

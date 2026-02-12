@@ -51,6 +51,9 @@ class CredentialVault:
             "twilio_account_sid": settings.TWILIO_ACCOUNT_SID,
             "twilio_auth_token": settings.TWILIO_AUTH_TOKEN,
             "twilio_whatsapp_from": settings.TWILIO_WHATSAPP_FROM,
+            # Telegram
+            "telegram_bot_token": settings.TELEGRAM_BOT_TOKEN,
+            "telegram_webhook_secret": settings.TELEGRAM_WEBHOOK_SECRET,
             # Google Workspace
             "google_service_account_json": settings.GOOGLE_SERVICE_ACCOUNT_JSON,
             "google_delegated_email": settings.GOOGLE_DELEGATED_EMAIL,
@@ -93,6 +96,8 @@ class CredentialVault:
                 "twilio_account_sid": settings.TWILIO_ACCOUNT_SID,
                 "twilio_auth_token": settings.TWILIO_AUTH_TOKEN,
                 "twilio_whatsapp_from": settings.TWILIO_WHATSAPP_FROM,
+                "telegram_bot_token": settings.TELEGRAM_BOT_TOKEN,
+                "telegram_webhook_secret": settings.TELEGRAM_WEBHOOK_SECRET,
                 "google_service_account_json": settings.GOOGLE_SERVICE_ACCOUNT_JSON,
                 "google_delegated_email": settings.GOOGLE_DELEGATED_EMAIL,
                 "google_calendar_id": settings.GOOGLE_CALENDAR_ID,
@@ -133,6 +138,7 @@ class CredentialVault:
             "twilio": lambda: bool(
                 cls.get("twilio_account_sid") and cls.get("twilio_auth_token")
             ),
+            "telegram": lambda: bool(cls.get("telegram_bot_token")),
             "google": lambda: bool(cls.get("google_service_account_json")),
             "google_calendar": lambda: bool(
                 cls.get("google_service_account_json") and cls.get("google_calendar_id")

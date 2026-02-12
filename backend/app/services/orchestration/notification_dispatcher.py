@@ -51,6 +51,7 @@ class NotificationDispatcher:
         handlers = {
             "whatsapp": cls._send_whatsapp,
             "email": cls._send_email,
+            "telegram": cls._send_telegram,
             "dashboard": cls._send_dashboard,
             "google_chat": cls._send_google_chat,
         }
@@ -114,6 +115,43 @@ class NotificationDispatcher:
         except ImportError:
             logger.warning("twilio_not_installed")
             return {"status": "skipped", "reason": "twilio package not installed"}
+
+    @classmethod
+    async def _send_telegram(
+        cls,
+        recipient: str,
+        content: str,
+        subject: str = "",
+        attachments: list[str] | None = None,
+    ) -> dict:
+        """Send Telegram message via Bot API."""
+        if not CredentialVault.is_configured("telegram"):
+            return {"status": "skipped", "reason": "Telegram bot not configured"}
+
+        bot_token = CredentialVault.get("telegram_bot_token")
+        base_url = f"https://api.telegram.org/bot{bot_token}"
+
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=15) as client:
+                resp = await client.post(
+                    f"{base_url}/sendMessage",
+                    json={
+                        "chat_id": recipient,
+                        "text": content,
+                        "parse_mode": "HTML",
+                    },
+                )
+                data = resp.json()
+                if data.get("ok"):
+                    return {
+                        "status": "sent",
+                        "message_id": data["result"].get("message_id"),
+                    }
+                return {"status": "failed", "error": data.get("description", "Unknown")}
+        except ImportError:
+            logger.warning("httpx_not_installed")
+            return {"status": "skipped", "reason": "httpx package not installed"}
 
     @classmethod
     async def _send_email(

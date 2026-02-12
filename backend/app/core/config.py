@@ -72,6 +72,10 @@ class Settings(BaseSettings):
     TWILIO_AUTH_TOKEN: str = ""
     TWILIO_WHATSAPP_FROM: str = ""  # e.g. "whatsapp:+14155238886"
 
+    # ── Telegram ─────────────────────────────
+    TELEGRAM_BOT_TOKEN: str = ""           # from @BotFather
+    TELEGRAM_WEBHOOK_SECRET: str = ""      # optional webhook verification
+
     # ── Google Workspace ─────────────────────
     GOOGLE_SERVICE_ACCOUNT_JSON: str = ""  # path to service account key
     GOOGLE_DELEGATED_EMAIL: str = ""       # email for domain-wide delegation
@@ -79,7 +83,7 @@ class Settings(BaseSettings):
     GOOGLE_DRIVE_FOLDER_ID: str = ""
 
     # ── Channels ─────────────────────────────
-    NOTIFICATION_CHANNELS: str = "email"  # "email,whatsapp"
+    NOTIFICATION_CHANNELS: str = "email"  # "email,whatsapp,telegram"
     CHANNEL_CALLBACK_BASE_URL: str = "http://localhost:8000"
     ALLOWED_EMAIL_DOMAINS: str = ""  # comma-separated
 

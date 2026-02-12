@@ -353,4 +353,39 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(data),
     }),
+
+  // ── Integrations / Configuration ────────────
+
+  getIntegrationStatus: () =>
+    fetchJSON<{
+      integrations: Record<string, { configured: boolean }>;
+    }>('/integrations/status'),
+
+  getCredentials: () =>
+    fetchJSON<{
+      credentials: {
+        key: string;
+        service: string;
+        value: string;
+        is_secret: boolean;
+        is_set: boolean;
+      }[];
+    }>('/integrations/credentials'),
+
+  setCredential: (data: { key: string; value: string; service: string; is_secret?: boolean }) =>
+    fetchJSON<{ status: string; key: string; service: string }>('/integrations/credentials', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  deleteCredential: (key: string) =>
+    fetchJSON<{ status: string; key: string }>(`/integrations/credentials/${key}`, {
+      method: 'DELETE',
+    }),
+
+  testConnection: (service: string) =>
+    fetchJSON<{ service: string; status: string; message: string }>('/integrations/test', {
+      method: 'POST',
+      body: JSON.stringify({ service }),
+    }),
 };

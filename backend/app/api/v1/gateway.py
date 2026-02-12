@@ -1,8 +1,9 @@
 """
-Gateway API — Webhook endpoints for WhatsApp and Email inbound messages.
+Gateway API — Webhook endpoints for WhatsApp, Telegram, and Email inbound messages.
 
-WhatsApp: POST /api/v1/gateway/whatsapp  (Twilio webhook)
-Email:    POST /api/v1/gateway/email     (Gmail push notification)
+WhatsApp:  POST /api/v1/gateway/whatsapp   (Twilio webhook)
+Telegram:  POST /api/v1/gateway/telegram   (Bot API webhook)
+Email:     POST /api/v1/gateway/email      (Gmail push notification)
 """
 
 from fastapi import APIRouter, Form, Request
@@ -83,6 +84,50 @@ async def email_webhook(request: Request) -> JSONResponse:
     """
     payload = await request.json()
     message = MessageGateway.from_email(payload)
+
+    # Submit as new task
+    task = await TaskOrchestrator.submit(message)
+
+    return JSONResponse(
+        content={
+            "status": "received",
+            "task_id": task.task_id,
+            "trace_id": task.trace_id,
+            "agent": task.routing.agent,
+        },
+        status_code=200,
+    )
+
+
+@router.post("/telegram")
+async def telegram_webhook(request: Request) -> JSONResponse:
+    """Receive incoming Telegram message via Bot API webhook.
+
+    Telegram sends a JSON Update object with the message content.
+    We normalize it and submit to the orchestrator.
+    """
+    payload = await request.json()
+
+    # Telegram webhook verification — ignore non-message updates
+    if "message" not in payload:
+        return JSONResponse(content={"status": "ignored"}, status_code=200)
+
+    message = MessageGateway.from_telegram(payload)
+
+    # Check for approval replies
+    body_lower = message.content.strip().lower()
+    if body_lower in ("approve", "approved", "setuju", "ya"):
+        logger.info("telegram_approval_reply", sender=message.sender, decision="approved")
+        return JSONResponse(
+            content={"status": "approval_processed", "decision": "approved"},
+            status_code=200,
+        )
+    elif body_lower in ("reject", "rejected", "tolak", "tidak"):
+        logger.info("telegram_approval_reply", sender=message.sender, decision="rejected")
+        return JSONResponse(
+            content={"status": "approval_processed", "decision": "rejected"},
+            status_code=200,
+        )
 
     # Submit as new task
     task = await TaskOrchestrator.submit(message)
