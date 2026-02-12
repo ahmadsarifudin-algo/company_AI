@@ -24,7 +24,7 @@ class UnifiedMessage:
     """
 
     id: str
-    channel: str  # "whatsapp" | "email" | "dashboard"
+    channel: str  # "whatsapp" | "telegram" | "email" | "dashboard"
     sender: str  # email or phone number
     sender_name: str = ""
     content: str = ""

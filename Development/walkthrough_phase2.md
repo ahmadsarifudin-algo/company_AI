@@ -66,3 +66,50 @@ gateway.py → TaskOrchestrator.submit()
 - [x] Webhook endpoint returns 200 immediately
 - [x] Background task calls orchestrator → dispatches reply
 - [x] Error in background → fallback error reply sent
+
+---
+
+## Phase 1 — Standardize Runtime Contract
+
+**Tanggal**: 2026-02-12  
+**Status**: ✅ Selesai
+
+### Tujuan
+
+Semua modul "bicara" dalam format yang sama — `ResponseEnvelope` sebagai output standar orchestrator.
+
+### Perubahan
+
+#### [MODIFY] `backend/app/services/orchestration/task_orchestrator.py`
+
+**Ditambahkan `ResponseEnvelope` dataclass:**
+```python
+@dataclass
+class ResponseEnvelope:
+    trace_id: str
+    run_id: str
+    reply_text: str
+    artifacts: list[dict] = field(default_factory=list)
+    control: dict = field(default_factory=dict)    # stop_reason, needs_approval
+    telemetry: dict = field(default_factory=dict)   # latency_ms, provider, model
+```
+
+**Perubahan pada `_execute()`:**
+- Setelah LLM response dan ResponseShaper selesai, membangun `ResponseEnvelope` dengan latency tracking
+- `task.response_envelope` di-set sebelum `_dispatch_reply()`
+
+**Perubahan pada `_dispatch_reply()`:**
+- Gunakan `envelope.reply_text` jika ada, fallback ke `task.agent_response`
+- Tambah logging `dispatch_reply_sent` dengan trace correlation
+
+#### [MODIFY] `backend/app/services/orchestration/message_gateway.py`
+
+- Updated `UnifiedMessage.channel` docs: tambah "telegram" ke channel list
+
+### Test
+
+- [x] ResponseEnvelope schema valid — dataclass dengan default factories
+- [x] `_execute()` builds envelope with latency telemetry
+- [x] `_dispatch_reply()` consumes envelope, falls back gracefully
+- [x] trace_id propagated through entire flow
+
