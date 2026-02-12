@@ -225,9 +225,11 @@ class TaskOrchestrator:
                 task.completed_at = datetime.now(timezone.utc)
 
                 # Build envelope
-                latency_ms = int(
-                    (task.completed_at - task.started_at).total_seconds() * 1000
-                )
+                latency_ms = 0
+                if task.completed_at and task.started_at:
+                    latency_ms = int(
+                        (task.completed_at - task.started_at).total_seconds() * 1000
+                    )
                 task.response_envelope = ResponseEnvelope(
                     trace_id=task.trace_id,
                     run_id=task.task_id,
@@ -379,9 +381,11 @@ class TaskOrchestrator:
             task.completed_at = datetime.now(timezone.utc)
 
             # ── 5. Build ResponseEnvelope ─────────────────────
-            latency_ms = int(
-                (task.completed_at - task.started_at).total_seconds() * 1000
-            )
+            latency_ms = 0
+            if task.completed_at and task.started_at:
+                latency_ms = int(
+                    (task.completed_at - task.started_at).total_seconds() * 1000
+                )
             task.response_envelope = ResponseEnvelope(
                 trace_id=task.trace_id,
                 run_id=task.task_id,
