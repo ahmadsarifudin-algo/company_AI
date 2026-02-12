@@ -12,7 +12,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, select, text, case, literal_column
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_db, CurrentUser, AdminOnly, ManagerUp
+from app.core.deps import get_db, CurrentUser, AdminOnly, ManagerUp, LeadUp
 from app.models.agent import Agent
 from app.models.audit import AuditEvent
 from app.models.prompt_history import PromptHistory
@@ -236,6 +236,7 @@ async def list_traces(
 @router.get("/traces/{trace_id}")
 async def get_trace_detail(
     trace_id: str,
+    user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ):
     """Full timeline for a single trace."""
@@ -320,6 +321,7 @@ async def get_trace_detail(
 
 @router.get("/approvals")
 async def list_approvals(
+    user: LeadUp,
     limit: int = Query(50, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
 ):
@@ -366,6 +368,7 @@ async def list_approvals(
 
 @router.get("/policies")
 async def list_policy_events(
+    user: CurrentUser,
     days: int = Query(7, ge=1, le=90),
     decision: Optional[str] = None,
     event_type: Optional[str] = None,
@@ -509,6 +512,7 @@ async def list_agents(
 @router.get("/agents/{agent_id}/prompt")
 async def get_agent_prompt(
     agent_id: str,
+    user: CurrentUser,
     db: AsyncSession = Depends(get_db),
 ):
     """Get current prompt + version history for an agent."""
@@ -555,6 +559,7 @@ async def get_agent_prompt(
 async def update_agent_prompt(
     agent_id: str,
     body: PromptUpdateRequest,
+    user: ManagerUp,
     db: AsyncSession = Depends(get_db),
 ):
     """Update an agent's system prompt override."""
@@ -597,6 +602,7 @@ async def update_agent_prompt(
 async def rollback_agent_prompt(
     agent_id: str,
     body: PromptRollbackRequest,
+    user: ManagerUp,
     db: AsyncSession = Depends(get_db),
 ):
     """Rollback agent prompt to a specific version."""
@@ -687,6 +693,7 @@ _TIER_MODELS = {
 async def test_agent(
     agent_id: str,
     body: AgentTestRequest,
+    user: LeadUp,
     db: AsyncSession = Depends(get_db),
 ):
     """Admin-only: Test an agent with a prompt and return the LLM response.
@@ -857,7 +864,7 @@ async def _get_api_key(provider: str = "google") -> str:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 @router.get("/settings/llm")
-async def get_llm_settings():
+async def get_llm_settings(user: ManagerUp):
     """Get current LLM configuration (key is masked)."""
     import os
 
@@ -901,7 +908,7 @@ class LLMSettingsUpdate(BaseModel):
 
 
 @router.put("/settings/llm")
-async def update_llm_settings(body: LLMSettingsUpdate):
+async def update_llm_settings(body: LLMSettingsUpdate, user: AdminOnly):
     """Update LLM provider and/or API key. Stored in Redis."""
     try:
         r = await _get_redis()
@@ -931,7 +938,7 @@ async def update_llm_settings(body: LLMSettingsUpdate):
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 @router.post("/agents/sync-prompts")
-async def sync_agent_prompts(db: AsyncSession = Depends(get_db)):
+async def sync_agent_prompts(user: AdminOnly, db: AsyncSession = Depends(get_db)):
     """Sync agent defaults from Python classes into the database.
 
     - Creates agents that exist in code but not in DB
