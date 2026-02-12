@@ -81,6 +81,13 @@ class TraceIndex(Base):
     approval_pending: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default="false", index=True,
     )
+    approval_decision: Mapped[str | None] = mapped_column(
+        String(20), nullable=True, comment="approved|rejected",
+    )
+    approved_by: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    approved_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True,
+    )
 
     # ── Integrity ────────────────────────────────
     audit_chain_ok: Mapped[bool | None] = mapped_column(Boolean, nullable=True)

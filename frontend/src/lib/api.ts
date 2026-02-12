@@ -339,4 +339,18 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(data),
     }),
+
+  // ── Approval Decisions ─────────────────────
+
+  decideApproval: (traceId: string, data: { decision: 'approved' | 'rejected'; reason?: string }) =>
+    fetchJSON<{
+      status: string;
+      trace_id: string;
+      decision: string;
+      decided_by: string;
+      decided_at: string;
+    }>(`/admin/approvals/${traceId}/decide`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
 };

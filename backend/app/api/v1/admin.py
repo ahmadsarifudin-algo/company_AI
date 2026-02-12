@@ -1120,3 +1120,84 @@ async def deactivate_user(
     await db.flush()
 
     return {"status": "ok", "message": f"User {user.email} deactivated"}
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  17) POST /admin/approvals/{trace_id}/decide  — Approve/Reject
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+class ApprovalDecisionRequest(BaseModel):
+    decision: str  # "approved" or "rejected"
+    reason: str | None = None
+
+
+@router.post("/approvals/{trace_id}/decide")
+async def decide_approval(
+    trace_id: str,
+    body: ApprovalDecisionRequest,
+    user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+):
+    """Approve or reject a pending approval, recording the user identity."""
+    from app.core.deps import ROLE_HIERARCHY
+
+    if body.decision not in ("approved", "rejected"):
+        raise HTTPException(400, "decision must be 'approved' or 'rejected'")
+
+    # Minimum role: lead
+    user_level = ROLE_HIERARCHY.get(user.role, 0)
+    if user_level < 2:
+        raise HTTPException(403, "Contributors cannot approve or reject traces")
+
+    # Fetch the trace
+    result = await db.execute(
+        select(TraceIndex).where(TraceIndex.trace_id == trace_id)
+    )
+    trace = result.scalar_one_or_none()
+
+    if not trace:
+        raise HTTPException(404, "Trace not found")
+
+    if not trace.approval_pending:
+        raise HTTPException(400, "This trace is not pending approval")
+
+    # Department scoping: leads/contributors can only decide for their dept
+    if user_level < 3 and trace.department != user.department:
+        raise HTTPException(403, "You can only approve/reject traces in your department")
+
+    # Apply decision
+    now = datetime.now(timezone.utc)
+    trace.approval_pending = False
+    trace.approval_decision = body.decision
+    trace.approved_by = user.email
+    trace.approved_at = now
+
+    if body.decision == "approved":
+        trace.status = "running"
+    else:
+        trace.status = "failed"
+        trace.last_error_code = "REJECTED"
+        trace.last_error_message_short = body.reason or "Rejected by approver"
+
+    # Create audit event
+    audit_event = AuditEvent(
+        trace_id=trace_id,
+        event_type="approval_decision",
+        agent_id="system",
+        department=trace.department,
+        decision=body.decision,
+        reason=body.reason,
+        approver_id=user.email,
+        risk_level=trace.risk_level,
+    )
+    db.add(audit_event)
+    await db.flush()
+
+    return {
+        "status": "ok",
+        "trace_id": trace_id,
+        "decision": body.decision,
+        "decided_by": user.email,
+        "decided_at": now.isoformat(),
+    }
+
