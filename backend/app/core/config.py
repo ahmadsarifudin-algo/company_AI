@@ -50,7 +50,7 @@ class Settings(BaseSettings):
     AGENT_LOOP_DETECTION_THRESHOLD: int = 5
 
     # ── Knowledge & RAG ──────────────────────
-    EMBEDDING_MODEL: str = "text-embedding-3-small"
+    EMBEDDING_MODEL: str = "embedding"
     EMBEDDING_DIMENSIONS: int = 1536
     CHUNK_SIZE: int = 500       # target tokens per chunk
     CHUNK_OVERLAP: int = 50     # token overlap between chunks
