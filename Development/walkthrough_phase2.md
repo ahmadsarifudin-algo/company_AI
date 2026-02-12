@@ -113,3 +113,47 @@ class ResponseEnvelope:
 - [x] `_dispatch_reply()` consumes envelope, falls back gracefully
 - [x] trace_id propagated through entire flow
 
+---
+
+## Phase 2 — Real Execution Path
+
+**Tanggal**: 2026-02-12  
+**Status**: ✅ Selesai
+
+### Tujuan
+
+Wire `TaskOrchestrator._execute()` ke `AgentExecutorService.chat_with_agent()` — full LangGraph pipeline dengan RAG, memory, audit.
+
+### Perubahan
+
+#### [MODIFY] `backend/app/services/orchestration/task_orchestrator.py`
+
+**Strategi: Try Agent Executor → Fallback Direct LLM**
+
+```python
+# _execute() sekarang:
+agent_result = await cls._try_agent_executor(task)
+if agent_result is not None:
+    # Build envelope + dispatch reply + return
+    return
+# Fallback: direct LLM call (existing behavior)
+```
+
+**`_try_agent_executor()` method:**
+1. Import `async_session` dari `app.core.deps`
+2. Lookup `Agent` dari DB by `name` + `department`
+3. Call `AgentExecutorService(db).chat_with_agent(agent_id, message, trace_id)`
+4. Return response text, atau `None` untuk trigger fallback
+
+**Safety:**
+- `ImportError` → fallback (agent executor belum available)
+- Agent not in DB → fallback (direct LLM)
+- Executor returns `"failed"` → fallback
+
+### Test
+
+- [x] `_try_agent_executor()` resolves agent from DB
+- [x] Falls back gracefully when DB/agent unavailable
+- [x] ResponseEnvelope built with `execution_path: agent_executor`
+
+
