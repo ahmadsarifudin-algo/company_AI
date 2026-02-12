@@ -2,7 +2,7 @@
 ## Multi-Agentic AI Enterprise OS
 
 **Last Updated**: 12 Feb 2026  
-**Status**: Phase 1-3 Complete ✅ | Phase 4 Next
+**Status**: Phase 1-3 Complete ✅ | Architecture Hardening Planned 🔜
 
 ---
 
@@ -16,42 +16,41 @@ gantt
     Phase 1 - Infrastructure     :done, p1, 2026-02-08, 2d
     Phase 2 - Agent Runtime      :done, p2, after p1, 2d
     Phase 3 - Knowledge/RAG      :done, p3, after p2, 2d
-    section Next 🔜
-    Phase 4a - Specialist Agents :p4, after p3, 7d
-    Phase 5 - Dashboard UI       :p5, after p4, 7d
-    Phase 6-8 - Admin/Testing/Live :p6, after p5, 14d
+    section In Progress 🔜
+    Architecture Hardening       :active, ah, after p3, 35d
+    section Planned
+    Phase 4 - Specialist Agents  :p4, after ah, 21d
+    Phase 5-8 - Dashboard/Admin/Live :p5, after p4, 42d
 ```
 
-| Phase | Status | Fitur |
+| Phase | Status | Scope |
 |-------|--------|-------|
 | **Phase 1** | ✅ Done | Infrastructure, Auth, DB, API skeleton |
 | **Phase 2** | ✅ Done | Agent runtime, LangGraph supervisor, audit |
 | **Phase 3** | ✅ Done | RAG pipeline, pgvector, agent memory |
-| **Phase 4** | 🔜 Next | 7 department specialist agents (63 total) |
-| **Phase 5** | ⬜ | Dashboard UI (Next.js) |
-| **Phase 6** | ⬜ | Admin governance |
-| **Phase 7** | ⬜ | Testing & security |
-| **Phase 8** | ⬜ | WhatsApp/Email integration, Go Live |
+| **Hardening** | 🔜 Next | Single Chokepoint, ABAC, Hash Chain Audit, Budget |
+| **Phase 4** | ⬜ | 7 department specialist agents (63 total) |
+| **Phase 5-8** | ⬜ | Dashboard, Admin, Testing, Go Live |
 
 ---
 
 ## ✅ Phase 1: Core Infrastructure
 
 ### Docker Stack (5 Containers)
-| Service | Image | Port |
-|---------|-------|------|
-| PostgreSQL + pgvector | `pgvector/pgvector:pg16` | 5432 |
-| Redis | `redis:7-alpine` | 6379 |
-| LiteLLM Proxy | `litellm:main-latest` | 4000 |
-| FastAPI App | `company_ai-app` | 8000 |
-| Celery Worker | `company_ai-worker` | — |
+| Service | Image | Port | Status |
+|---------|-------|------|--------|
+| PostgreSQL + pgvector | `pgvector/pgvector:pg16` | 5432 | ✅ Healthy |
+| Redis | `redis:7-alpine` | 6379 | ✅ Healthy |
+| LiteLLM Proxy | `litellm:main-latest` | 4000 | ✅ Running |
+| FastAPI App | `company_ai-app` | 8000 | ✅ Running |
+| Celery Worker | `company_ai-worker` | — | ✅ Running |
 
-### Authentication System
-- JWT + OAuth2 (register, login, token refresh)
+### Authentication & Security
+- JWT + OAuth2 (register, login)
 - Role-based access (admin, contributor)
 - Password hashing (bcrypt via passlib)
 
-### Database Models (5 tables)
+### Database (5 tables)
 | Table | Purpose |
 |-------|---------|
 | `users` | User accounts + departments |
@@ -60,183 +59,118 @@ gantt
 | `audit_log` | Immutable action log + cost tracking |
 | `knowledge_documents` | RAG document chunks + pgvector embeddings |
 
-### API Endpoints (20 endpoints)
-
-#### 🔐 Auth (`/api/v1/auth`)
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/register` | Register new user |
-| POST | `/login` | Login, get JWT token |
-
-#### 🤖 Agents (`/api/v1/agents`)
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/` | List all agents |
-| POST | `/` | Create agent (auth required) |
-| GET | `/{agent_id}` | Get agent details |
-| PATCH | `/{agent_id}` | Update agent config |
-| GET | `/stats/summary` | Agent stats by dept/tier |
-
-#### 📋 Tasks (`/api/v1/tasks`)
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/` | List tasks (filter by dept/status) |
-| POST | `/` | Submit new task |
-| GET | `/{task_id}` | Get task details |
-| PATCH | `/{task_id}/status` | Update task status |
-
-#### ⚡ Execution (`/api/v1/execution`)
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/execute` | Execute task via LangGraph pipeline |
-| POST | `/chat` | Chat with agent (session memory) |
-| GET | `/audit/{agent}` | Agent audit trail |
-| GET | `/audit/department/{dept}` | Department audit trail |
-| GET | `/costs` | Cost summary |
-
-#### 📚 Knowledge (`/api/v1/knowledge`) — Phase 3
-| Method | Path | Description |
-|--------|------|-------------|
-| POST | `/ingest` | Ingest document → chunk → embed → store |
-| POST | `/search` | Semantic search via pgvector |
-| GET | `/documents` | List all documents |
-| DELETE | `/{doc_id}` | Delete document + chunks |
+### API Endpoints (20 live)
+- 🔐 **Auth** (2) — register, login
+- 🤖 **Agents** (5) — CRUD + stats
+- 📋 **Tasks** (4) — CRUD + status update
+- ⚡ **Execution** (5) — execute, chat, audit, costs
+- 📚 **Knowledge** (4) — ingest, search, list, delete
+- ❤️ **Health** (1) — system check
 
 ---
 
 ## ✅ Phase 2: Agent Runtime
 
-### LangGraph Supervisor Pattern
-- **GlobalSupervisor**: Routes tasks to department supervisors
-- **DepartmentSupervisor**: Assigns tasks to agents within department
-- Two-tier orchestration: Global → Department → Agent
-
-### BaseAgent Class
-- LiteLLM model selection by tier (nano/standard/advanced)
-- Rate limiting per agent
-- Loop detection (auto-pause after 5 same-tool calls)
-- Token budget enforcement
-- Max execution time (10 min default)
-
-### Audit Service
-- Immutable logging (append-only)
-- Cost tracking per action
-- Department/agent filtering
-- Cost summary aggregation
-
-### Agent Executor
-- LangGraph graph invocation
-- RAG context injection before execution
-- Long-term memory saving after completion
-- Session memory for chat continuity
+- **LangGraph Supervisor** — Global → Department → Agent routing
+- **BaseAgent** — LiteLLM model selection, rate limiting, loop detection, token budget
+- **Audit Service** — Immutable logging, cost tracking, department/agent filtering
+- **Agent Executor** — Graph invocation, RAG injection, memory persistence
 
 ---
 
-## ✅ Phase 3: Knowledge & RAG Pipeline
+## ✅ Phase 3: Knowledge & RAG
 
-### Document Ingestion Flow
-```
-Document → Chunking (500 tokens, 50 overlap)
-         → Embedding (OpenAI text-embedding-3-small via LiteLLM)
-         → pgvector Storage (Vector 1536 dims)
-```
-
-### Semantic Search
-- Cosine similarity via pgvector `<=>` operator
-- Department-scoped filtering
-- Document type filtering
-- Configurable top-k results (default: 5)
-
-### Agent Memory
-| Type | Backend | TTL |
-|------|---------|-----|
-| Session memory | Redis | 24 hours |
-| Long-term memory | pgvector | Permanent |
-
-### Pipeline Integration
-- `retrieve_context` node in LangGraph supervisor graph
-- RAG context auto-injected before agent execution
-- Key decisions saved to knowledge base after task completion
+- **Document Ingestion** — Text → chunk (500 tokens) → embed (OpenAI) → pgvector
+- **Semantic Search** — Cosine similarity, department-scoped, configurable top-k
+- **Agent Memory** — Session (Redis 24h TTL) + Long-term (pgvector permanent)
+- **Pipeline Integration** — RAG context auto-injected before agent execution
 
 ---
 
-## 📁 Codebase Structure (39 Python files)
+## 🔜 Architecture Hardening Plan
+
+> Production-grade security built on **Single Chokepoint** principle.
+
+### Architecture
+
+```mermaid
+graph TB
+    subgraph "Agent Layer"
+        A[Agents]
+    end
+    subgraph "Gateway Layer"
+        TB[ToolBroker]
+        LC[LLMClient]
+        DAL[DataAccessLayer]
+    end
+    subgraph "Control Plane"
+        TR[ToolRegistry] & PE[PolicyEngine] & BE[BudgetEnforcer] & AU[AuditService]
+    end
+
+    A -->|call_tool| TB
+    A -->|call_llm| LC
+    A -->|read/write| DAL
+    TB & LC & DAL --> TR & PE & BE & AU
+```
+
+### 9 Modules Planned (26 files)
+
+| # | Module | Key Deliverables |
+|---|--------|-----------------|
+| 0 | **Single Chokepoint** | LLMClient, ToolBroker, DataAccessLayer — 3 mandatory gateways |
+| 1 | **Tool Registry** | Static allowlist, sandbox, network egress control |
+| 2 | **ABAC Policy Engine** | Policy rules (YAML), PII protection, field masking |
+| 3 | **Agent Contracts** | AgentInputSchema, AgentOutputSchema, ApprovalGate, IdempotencyGuard |
+| 4 | **Audit Hash Chain** | Event-sourcing, SHA-256 chain, tamper detection |
+| 5 | **Observability** | Trace IDs (end-to-end), metrics, admin dashboard |
+| 6 | **Atomic Budget** | Redis Lua reservation, concurrency-safe, soft/hard limits |
+| 7 | **Resilience** | Retry taxonomy, DLQ, circuit breaker, idempotent side-effects |
+| 8 | **Reference Workflow** | Finance invoice: draft → review → approval → finalize |
+
+### Definition of Done
+- ✅ All tool/LLM/DB calls through gateways only
+- ✅ Unknown tools 100% denied + audited
+- ✅ PII requires ticket + approval (enforced by DAL)
+- ✅ Hash chain per trace verifiable
+- ✅ `trace_id` in request, response, logs, audit, queue
+- ✅ Budget atomic under concurrency (100 parallel test)
+- ✅ Retry + DLQ + no duplicate side-effects
+- ✅ No `import requests/httpx/psycopg` in `agents/` (CI enforced)
+
+---
+
+## 📁 Current Codebase (39 Python files)
 
 ```
-backend/
-├── app/
-│   ├── main.py                    # FastAPI app entry
-│   ├── worker.py                  # Celery worker
-│   ├── seed.py                    # DB seed script
-│   ├── core/
-│   │   ├── config.py              # Settings (Pydantic)
-│   │   ├── deps.py                # DI (DB session, auth)
-│   │   └── security.py            # JWT, password hashing
-│   ├── models/
-│   │   ├── user.py                # User model
-│   │   ├── agent.py               # Agent model
-│   │   ├── task.py                # Task model
-│   │   ├── audit.py               # AuditLog model
-│   │   ├── knowledge.py           # KnowledgeDocument + pgvector
-│   │   └── base.py                # SQLAlchemy base
-│   ├── schemas/
-│   │   ├── auth.py                # Auth request/response
-│   │   ├── agent.py               # Agent CRUD schemas
-│   │   ├── task.py                # Task schemas
-│   │   ├── execution.py           # Execution schemas
-│   │   └── knowledge.py           # Knowledge API schemas
-│   ├── api/v1/
-│   │   ├── router.py              # V1 router aggregator
-│   │   ├── auth.py                # Auth endpoints
-│   │   ├── agents.py              # Agent CRUD endpoints
-│   │   ├── tasks.py               # Task endpoints
-│   │   ├── execution.py           # Execution endpoints
-│   │   ├── knowledge.py           # Knowledge/RAG endpoints
-│   │   └── health.py              # Health check
-│   ├── agents/
-│   │   ├── state.py               # AgentState TypedDict
-│   │   ├── base_agent.py          # BaseAgent class
-│   │   └── supervisor.py          # LangGraph supervisors
-│   └── services/
-│       ├── agent_executor.py      # Task execution orchestrator
-│       ├── audit_service.py       # Audit logging
-│       ├── knowledge_service.py   # RAG pipeline (278 lines)
-│       └── memory_service.py      # Session + long-term memory
-├── alembic/                       # DB migrations
-├── Dockerfile
-├── pyproject.toml                 # Dependencies
-└── .env                           # Config
+backend/app/
+├── main.py, worker.py, seed.py
+├── core/     (config, deps, security)
+├── models/   (user, agent, task, audit, knowledge, base)
+├── schemas/  (auth, agent, task, execution, knowledge)
+├── api/v1/   (router, auth, agents, tasks, execution, knowledge, health)
+├── agents/   (state, base_agent, supervisor)
+└── services/ (agent_executor, audit_service, knowledge_service, memory_service)
 ```
 
 ---
 
 ## 🧪 E2E Test Results (10/10 ✅)
 
-| # | Test | Status |
-|---|------|--------|
-| 1 | Health check (DB + Redis) | ✅ |
-| 2 | User registration + JWT | ✅ |
-| 3 | Create agent | ✅ |
-| 4 | Create task | ✅ |
-| 5 | List agents | ✅ |
-| 6 | List tasks | ✅ |
-| 7 | Knowledge ingest (chunk + embed + store) | ✅ |
-| 8 | Semantic search (pgvector cosine) | ✅ |
-| 9 | Knowledge document listing | ✅ |
-| 10 | Agent stats | ✅ |
+| Test | Status |
+|------|--------|
+| Health check (DB + Redis) | ✅ |
+| User registration + JWT | ✅ |
+| Create/List agents | ✅ |
+| Create/List tasks | ✅ |
+| Knowledge ingest (chunk + embed + pgvector) | ✅ |
+| Semantic search | ✅ |
+| Agent stats | ✅ |
 
 ---
 
-## 🔜 What's Next: Phase 4 — Specialist Agents
-
-63 agents across 7 departments:
-
-| Department | Agents | Example Roles |
-|------------|--------|---------------|
-| Tech | 11 | Architect, Backend, Frontend, QA, DevOps |
-| Finance | 9 | Accounting, Budget, Forecasting, Tax |
-| HR | 8 | Recruitment, Payroll, Performance |
-| Sales | 6 | Lead Scoring, Deal Intel, Pricing |
-| Marketing | 8 | Content, Social Media, SEO, Analytics |
-| Legal | 7 | Contract, Compliance, Data Protection |
-| BizDev | 7 | Market Research, Partnership, Strategy |
+## 🔗 Git History
+| Commit | Description |
+|--------|-------------|
+| `9fe47a8` | Add Project Progress Report |
+| `8d7fec1` | Fix embedding model alias |
+| `6397327` | Fix email-validator + knowledge DI |
