@@ -290,6 +290,10 @@ class ToolBroker:
                 "function": {
                     "name": t.name,
                     "description": t.description,
+                    "parameters": t.parameters if t.parameters else {
+                        "type": "object",
+                        "properties": {},
+                    },
                 },
             }
             for t in tools
