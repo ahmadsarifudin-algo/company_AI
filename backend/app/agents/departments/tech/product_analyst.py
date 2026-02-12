@@ -1,93 +1,122 @@
 """
-ProductAnalystAgent — Generates PRDs, acceptance criteria, and KPIs.
+ProductAnalystAgent — PRD generation, acceptance criteria, KPI definition.
 
-Responsibilities:
-- Transform stakeholder requests into structured PRDs
-- Define acceptance criteria in Gherkin format
-- Identify KPIs and success metrics
-- Flag risks and out-of-scope items
+Key goals:
+- Deterministic output: always produce a ProductAnalysisOutput-compatible payload
+- Telemetry: duration_ms, token deltas, span_id
+- Artifact-driven: produce artifact_id + artifact payload for dashboard rendering
 """
 
-import json
-from typing import Any
+from __future__ import annotations
 
+import json
+import uuid
 import structlog
 
 from app.agents.base_agent import BaseAgent
+from app.agents.output_schemas import ProductAnalysisOutput
 from app.agents.state import AgentState
+from app.core.telemetry import now_ms
 
 logger = structlog.get_logger()
 
 
 class ProductAnalystAgent(BaseAgent):
-    """Generates Product Requirements Documents from stakeholder input."""
+    """
+    Generates PRDs, acceptance criteria, KPIs, and risk assessments.
+    """
 
-    def get_system_prompt(self) -> str:
+    name = "product_analyst_agent"
+    department = "tech"
+    role = "agent"
+
+    def _default_system_prompt(self) -> str:
         return (
             "You are a Product Analyst Agent in the Tech Department.\n\n"
-            "Your responsibilities:\n"
-            "1. Generate structured PRDs from feature requests\n"
-            "2. Write acceptance criteria in Gherkin format (Given/When/Then)\n"
-            "3. Define measurable KPIs and success metrics\n"
-            "4. Identify risks, dependencies, and out-of-scope items\n"
-            "5. Estimate effort and priority\n\n"
-            "Output format (JSON):\n"
-            "{\n"
-            '  "title": "Feature title",\n'
-            '  "summary": "Brief description",\n'
-            '  "user_stories": ["As a..., I want..., so that..."],\n'
-            '  "acceptance_criteria": [\n'
-            '    {"scenario": "name", "given": "...", "when": "...", "then": "..."}\n'
-            "  ],\n"
-            '  "kpis": [{"metric": "name", "target": "value", "measurement": "how"}],\n'
-            '  "risks": ["identified risks"],\n'
-            '  "out_of_scope": ["excluded items"],\n'
-            '  "priority": "P0|P1|P2|P3",\n'
-            '  "estimated_effort": "XS|S|M|L|XL"\n'
-            "}\n"
-            "Respond ONLY with valid JSON."
+            "Responsibilities:\n"
+            "1) Generate Product Requirements Documents (PRDs)\n"
+            "2) Define acceptance criteria for features\n"
+            "3) Identify KPIs and success metrics\n"
+            "4) Assess risks and propose mitigations\n\n"
+            "Return ONLY valid JSON (no markdown), with keys:\n"
+            '{"prd": {}, "acceptance_criteria": [], "kpis": [], "risks": []}\n'
         )
 
     async def process(self, state: AgentState) -> AgentState:
-        """Generate a PRD from the task description."""
+        start_ms = now_ms()
+        span_id = uuid.uuid4().hex
+
+        task_id = state.get("task_id", "")
+        trace_id = state.get("trace_id", "")
+        task_description = state.get("task_description", "")
+
         ctx = self.get_context(
-            task_id=state.get("task_id", ""),
-            trace_id=state.get("trace_id", ""),
+            task_id=task_id, trace_id=trace_id, span_id=span_id,
+            department=state.get("department", self.department),
+            role=state.get("role", self.role),
+            risk_level=state.get("risk_level", "low"),
         )
 
-        task_desc = state.get("task_description", "")
-        plan = state.get("artifacts", {}).get("plan_json", {})
-        context = f"Task: {task_desc}"
-        if plan:
-            context += f"\nProject plan context: {json.dumps(plan, indent=2)}"
+        self._emit_lifecycle("agent_started", ctx, {
+            "agent": self.name, "task_id": task_id,
+            "trace_id": trace_id, "span_id": span_id,
+        })
 
         messages = [
             {"role": "system", "content": self.get_system_prompt()},
-            {"role": "user", "content": context},
+            {"role": "user", "content": task_description},
         ]
 
-        self.log.info("prd_generation_start", trace_id=ctx.trace_id)
-        response = await self.call_llm(messages, temperature=0.4, ctx=ctx)
+        response = await self.call_llm(messages, temperature=0.3, ctx=ctx)
 
-        try:
-            prd = json.loads(response.content)
-        except json.JSONDecodeError:
-            prd = {"raw_response": response.content, "title": task_desc[:80]}
+        content = "" if response is None else getattr(response, "content", "") or ""
+        result = self._safe_json_loads(content)
+        result = self._validate_output(result, ProductAnalysisOutput)
+
+        artifact_id = f"prd_{task_id}_{span_id}"
+        artifact = {
+            "artifact_id": artifact_id,
+            "type": "tech.product_analyst.prd",
+            "created_at_ms": now_ms(),
+            "trace_id": trace_id,
+            "span_id": span_id,
+            "agent": self.name,
+            "payload": result,
+        }
 
         artifacts = dict(state.get("artifacts", {}))
-        artifacts["prd"] = prd
+        artifacts["product_analysis"] = artifact
 
-        self.log.info(
-            "prd_generation_complete",
-            trace_id=ctx.trace_id,
-            title=prd.get("title", "unknown"),
-            cost_usd=response.cost_usd,
+        total_tokens = int(getattr(response, "total_tokens", 0) or 0)
+        prev_tokens = int(state.get("token_usage", 0) or 0)
+
+        end_ms = now_ms()
+        duration_ms = end_ms - start_ms
+
+        backend_output = self._build_output(
+            task_id=task_id,
+            status="completed",
+            summary=result.get("summary", "Product analysis completed."),
+            artifact_id=artifact_id,
+            artifact_type=artifact["type"],
+            telemetry={"duration_ms": duration_ms, "tokens_used": total_tokens,
+                        "span_id": span_id, "trace_id": trace_id},
         )
+
+        self._emit_lifecycle("agent_completed", ctx, {
+            "agent": self.name, "task_id": task_id,
+            "duration_ms": duration_ms, "artifact_ids": [artifact_id],
+            "tokens_used": total_tokens,
+        })
 
         return {
             **state,
-            "artifacts": artifacts,
-            "status": "prd_complete",
+            "status": "product_analysis_complete",
             "current_agent": self.name,
-            "token_usage": state.get("token_usage", 0) + response.total_tokens,
+            "trace_id": trace_id,
+            "last_run_ms": end_ms,
+            "duration_ms": duration_ms,
+            "token_usage": prev_tokens + total_tokens,
+            "artifacts": artifacts,
+            "output": backend_output,
         }

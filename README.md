@@ -5,7 +5,7 @@
 ![System](https://img.shields.io/badge/Agents-63-blue)
 ![Departments](https://img.shields.io/badge/Departments-7-green)
 ![Humans](https://img.shields.io/badge/Humans-31-orange)
-![Status](https://img.shields.io/badge/Status-Design%20Complete-brightgreen)
+![Status](https://img.shields.io/badge/Status-Phase%20A%20Complete-brightgreen)
 ![LLM Cost](https://img.shields.io/badge/LLM%20Cost-~%241%2C389%2Fmo-purple)
 
 ---
@@ -30,6 +30,20 @@ graph TD
     Tech & Fin & HR & Sales & Mkt & Legal & BizDev --> Tools[Tool Sandbox]
     Tools --> Store[(Artifact Store + Audit Ledger)]
 ```
+
+---
+
+## 🚀 Development Progress
+
+| Phase | Status | What's Built |
+|-------|--------|-------------|
+| **Foundation** | ✅ Done | FastAPI + SQLAlchemy + JWT auth, Docker compose, hot-swap DB |
+| **Agent Runtime** | ✅ Done | BaseAgent, PolicyEngine, ApprovalGate, Telemetry, 34 agent classes |
+| **Dashboard UI** | ✅ Done | Next.js 14 admin dashboard — 7 pages (Overview, Agents, Traces, Approvals, Playground, Users, Settings) |
+| **User Registration** | ✅ Done | Admin-driven invite flow, SHA-256 hashed tokens, role hierarchy (admin/manager/lead/contributor) |
+| **LLM Integration** | ✅ Done | Gemini direct (gemini-2.0-flash), settings page for model config |
+| **Login & RBAC** | 🔲 Next | Login page, AuthContext, role-based UI filtering |
+| **HITL Approval** | 🔲 Next | Human identity in approval chain, department scoping |
 
 ---
 
@@ -85,37 +99,33 @@ Cost-efficient multi-model routing saves **69%** compared to running all agents 
 
 ```
 company_AI/
-├── README.md                         # This file
-├── ENTERPRISE_AGENTS_MANUAL.md       # Unified governance framework
-├── TECHNICAL_ARCHITECTURE.md         # Full tech stack & architecture
-├── IMPLEMENTATION_ROADMAP.md         # 24-week implementation plan
-├── MODEL_TIER_CLASSIFICATION.md      # 4-tier model cost strategy
-├── ADMIN_GOVERNANCE_DESIGN.md        # Admin controls & cost monitoring
-├── HUMAN_AGENT_SYSTEM.md             # Human-Agent pairing system
-├── HUMAN_AGENT_MAPPING.md            # 31 humans ↔ 63 agents mapping
-├── HUMAN_INTERFACE_DESIGN.md         # Dashboard & UI wireframes
-├── AGENT_WORKFLOWS.md                # 8 workflow diagrams (Mermaid)
+├── backend/
+│   ├── app/
+│   │   ├── main.py                   # FastAPI app entry
+│   │   ├── worker.py                 # Celery worker
+│   │   ├── core/                     # Config, security, deps, policy engine
+│   │   ├── models/                   # SQLAlchemy models (User, Agent, AuditEvent)
+│   │   ├── schemas/                  # Pydantic schemas
+│   │   ├── api/v1/                   # API routers (admin, auth, tasks, playground)
+│   │   └── agents/                   # 34 agent classes across 7 departments
+│   │       └── departments/          # finance/, hr/, tech/, sales/, etc.
+│   ├── docker-compose.yml
+│   └── Dockerfile
 │
-├── Development/
-│   └── AGENTS_Tech.md                # Tech department (11 agents)
-├── Finance/
-│   └── AGENTS_FINANCE.md             # Finance department (9 agents)
-├── HR/
-│   └── AGENTS_HR.md                  # HR department (8 agents)
-├── Sales/
-│   └── AGENTS_SALES.md               # Sales department (6 agents)
-├── Marketing/
-│   └── AGENTS_MARKETING.md           # Marketing department (8 agents)
-├── Legal/
-│   └── AGENTS_LEGAL.md               # Legal department (7 agents)
-├── BusinessDev/
-│   └── AGENTS_BIZDEV.md              # BizDev department (7 agents)
+├── frontend/
+│   ├── src/app/
+│   │   ├── (admin)/                  # Dashboard pages (Overview, Agents, Traces,
+│   │   │                             #   Approvals, Playground, Users, Settings)
+│   │   └── invite/                   # Public invite page
+│   └── src/lib/api.ts                # API client
 │
-└── Evaluasi/
-    ├── PROFESSIONAL_SYSTEM_ANALYSIS.md   # System analysis (7.4/10)
-    ├── SYSTEM_GAP_ANALYSIS.md            # 10 gaps identified
-    ├── AGENT_GAP_REVIEW.md               # Gap resolution status
-    └── COST_ANALYSIS_CAPEX_OPEX.md       # Full CAPEX/OPEX analysis
+├── Design Documents (19 docs)
+│   ├── ENTERPRISE_AGENTS_MANUAL.md   # Governance framework
+│   ├── TECHNICAL_ARCHITECTURE.md     # Tech stack & architecture
+│   ├── IMPLEMENTATION_ROADMAP.md     # 24-week plan
+│   └── ...                           # Model tiers, RBAC, workflows, etc.
+│
+└── Evaluasi/                         # System analysis & cost reports
 ```
 
 ---

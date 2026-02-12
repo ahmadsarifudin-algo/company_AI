@@ -1,38 +1,54 @@
-"""ContractReviewAgent — Contract terms review and risk assessment."""
-
-import json, structlog
+"""ContractReviewAgent — Contract review, clause analysis, renewal tracking."""
+from __future__ import annotations
+import json, uuid, structlog
 from app.agents.base_agent import BaseAgent
+from app.agents.output_schemas import ContractReviewOutput
 from app.agents.state import AgentState
+from app.core.telemetry import now_ms
 logger = structlog.get_logger()
 
 class ContractReviewAgent(BaseAgent):
-    """Reviews contract terms, identifies risk clauses, manages renewals."""
+    """Reviews contracts, analyzes clauses, and tracks renewals."""
+    name = "contract_review_agent"; department = "sales"; role = "agent"
 
-    def get_system_prompt(self) -> str:
+    def _default_system_prompt(self) -> str:
         return (
             "You are a Contract Review Agent in the Sales Department.\n\n"
-            "Responsibilities:\n"
-            "1. Review contract terms and conditions\n"
-            "2. Identify risk clauses (liability, indemnification, SLA)\n"
-            "3. Compare against standard contract templates\n"
-            "4. Track contract renewals and expirations\n"
-            "5. Recommend negotiation points\n\n"
-            "Output JSON: {\"review\": {\"contract_type\": \"\", "
-            "\"risk_clauses\": [{\"clause\": \"\", \"risk\": \"high|medium|low\", "
-            "\"recommendation\": \"\"}], \"deviations_from_standard\": [], "
-            "\"overall_risk\": \"acceptable|review_required|reject\"}, "
-            "\"renewal_tracking\": {}}"
+            "Responsibilities:\n1) Review contract terms and clauses\n"
+            "2) Flag risky or non-standard terms\n3) Track renewal dates\n\n"
+            "Return ONLY valid JSON:\n"
+            '{"review": {}, "renewal_tracking": {}}\n'
         )
 
     async def process(self, state: AgentState) -> AgentState:
-        ctx = self.get_context(task_id=state.get("task_id", ""), trace_id=state.get("trace_id", ""))
-        messages = [{"role": "system", "content": self.get_system_prompt()},
-                    {"role": "user", "content": state.get("task_description", "")}]
-        response = await self.call_llm(messages, temperature=0.2, ctx=ctx)
-        try: result = json.loads(response.content)
-        except json.JSONDecodeError: result = {"raw_response": response.content}
-        artifacts = dict(state.get("artifacts", {}))
-        artifacts["contract_review"] = result
-        return {**state, "artifacts": artifacts, "status": "contract_review_complete",
-                "current_agent": self.name,
-                "token_usage": state.get("token_usage", 0) + response.total_tokens}
+        start_ms = now_ms(); span_id = uuid.uuid4().hex
+        task_id = state.get("task_id", ""); trace_id = state.get("trace_id", "")
+        ctx = self.get_context(task_id=task_id, trace_id=trace_id, span_id=span_id,
+            department=state.get("department", self.department), role=state.get("role", self.role),
+            risk_level=state.get("risk_level", "medium"))
+        self._emit_lifecycle("agent_started", ctx, {"agent": self.name, "task_id": task_id,
+            "trace_id": trace_id, "span_id": span_id})
+        response = await self.call_llm([{"role": "system", "content": self.get_system_prompt()},
+            {"role": "user", "content": state.get("task_description", "")}], temperature=0.1, ctx=ctx)
+        content = "" if response is None else getattr(response, "content", "") or ""
+        result = self._safe_json_loads(content)
+        result = self._validate_output(result, ContractReviewOutput)
+        artifact_id = f"contract_{task_id}_{span_id}"
+        artifact = {"artifact_id": artifact_id, "type": "sales.contract_review.analysis",
+            "created_at_ms": now_ms(), "trace_id": trace_id, "span_id": span_id,
+            "agent": self.name, "payload": result}
+        artifacts = dict(state.get("artifacts", {})); artifacts["contract_review"] = artifact
+        total_tokens = int(getattr(response, "total_tokens", 0) or 0)
+        prev_tokens = int(state.get("token_usage", 0) or 0)
+        end_ms = now_ms(); duration_ms = end_ms - start_ms
+        backend_output = self._build_output(
+            task_id=task_id, status="completed",
+            summary=result.get("summary", "Contract review completed."),
+            artifact_id=artifact_id, artifact_type=artifact["type"],
+            telemetry={"duration_ms": duration_ms, "tokens_used": total_tokens,
+                        "span_id": span_id, "trace_id": trace_id})
+        self._emit_lifecycle("agent_completed", ctx, {"agent": self.name, "task_id": task_id,
+            "duration_ms": duration_ms, "artifact_ids": [artifact_id], "tokens_used": total_tokens})
+        return {**state, "status": "contract_review_complete", "current_agent": self.name,
+            "trace_id": trace_id, "last_run_ms": end_ms, "duration_ms": duration_ms,
+            "token_usage": prev_tokens + total_tokens, "artifacts": artifacts, "output": backend_output}

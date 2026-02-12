@@ -14,7 +14,7 @@ services:
       - pgdata:/var/lib/postgresql/data
       - ./infrastructure/init.sql:/docker-entrypoint-initdb.d/init.sql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -29,29 +29,10 @@ services:
     volumes:
       - redisdata:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: [ "CMD", "redis-cli", "ping" ]
       interval: 5s
       timeout: 5s
       retries: 5
-
-  # ── LiteLLM Proxy ─────────────────────────
-  litellm:
-    image: ghcr.io/berriai/litellm:main-latest
-    container_name: company_ai_litellm
-    restart: unless-stopped
-    ports:
-      - "4000:4000"
-    volumes:
-      - ./infrastructure/litellm_config.yaml:/app/config.yaml
-    command: ["--config", "/app/config.yaml", "--port", "4000"]
-    environment:
-      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-sk-litellm-master-key}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
-    depends_on:
-      redis:
-        condition: service_healthy
 
   # ── FastAPI Backend ────────────────────────
   app:
@@ -71,8 +52,6 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      litellm:
-        condition: service_started
 
   # ── Celery Worker ──────────────────────────
   worker:

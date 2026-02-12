@@ -1,74 +1,111 @@
 """
-SREAgent — Monitoring, incident response, and postmortem drafting.
+SREAgent — Monitoring, alerting, runbooks, postmortem analysis.
 
-Responsibilities:
-- Define monitoring rules and alerts
-- Draft incident response runbooks
-- Generate postmortem documents
-- Analyze system reliability metrics
+Key goals:
+- Deterministic output: always produce a SREOutput-compatible payload
+- Telemetry: duration_ms, token deltas, span_id
+- Artifact-driven: produce artifact_id + artifact payload for dashboard rendering
 """
 
-import json
+from __future__ import annotations
 
+import json
+import uuid
 import structlog
 
 from app.agents.base_agent import BaseAgent
+from app.agents.output_schemas import SREOutput
 from app.agents.state import AgentState
+from app.core.telemetry import now_ms
 
 logger = structlog.get_logger()
 
 
 class SREAgent(BaseAgent):
-    """Generates monitoring configs, incident response, and postmortems."""
+    """Creates monitoring rules, alerts, runbooks, and postmortem templates."""
 
-    def get_system_prompt(self) -> str:
+    name = "sre_agent"
+    department = "tech"
+    role = "agent"
+
+    def _default_system_prompt(self) -> str:
         return (
-            "You are an SRE (Site Reliability Engineer) Agent in the Tech Department.\n\n"
-            "Your responsibilities:\n"
-            "1. Define monitoring rules and alerting thresholds\n"
-            "2. Create incident response runbooks\n"
-            "3. Draft blameless postmortem documents\n"
-            "4. Analyze reliability metrics (SLOs, SLIs, error budgets)\n"
-            "5. Recommend scaling and resilience improvements\n\n"
-            "Output format (JSON):\n"
-            "{\n"
-            '  "monitoring": {\n'
-            '    "alerts": [{"name": "...", "condition": "...", "severity": "critical|warning|info", "channel": "..."}],\n'
-            '    "dashboards": [{"name": "...", "panels": ["..."]}]\n'
-            "  },\n"
-            '  "runbook": {"title": "...", "steps": ["..."], "escalation": ["..."]},\n'
-            '  "postmortem": {"incident": "...", "timeline": ["..."], "root_cause": "...", "action_items": ["..."]},\n'
-            '  "slo": {"target": "99.9%", "current": "...", "error_budget_remaining": "..."}\n'
-            "}\n"
-            "Respond ONLY with valid JSON."
+            "You are an SRE Agent in the Tech Department.\n\n"
+            "Responsibilities:\n"
+            "1) Define monitoring rules and SLIs/SLOs\n"
+            "2) Configure alerting thresholds\n"
+            "3) Write operational runbooks\n"
+            "4) Create postmortem templates\n\n"
+            "Return ONLY valid JSON (no markdown), with keys:\n"
+            '{"monitoring_rules": [], "alerts": [], "runbook": {}, "postmortem": {}}\n'
         )
 
     async def process(self, state: AgentState) -> AgentState:
+        start_ms = now_ms()
+        span_id = uuid.uuid4().hex
+
+        task_id = state.get("task_id", "")
+        trace_id = state.get("trace_id", "")
+        task_description = state.get("task_description", "")
+
         ctx = self.get_context(
-            task_id=state.get("task_id", ""),
-            trace_id=state.get("trace_id", ""),
+            task_id=task_id, trace_id=trace_id, span_id=span_id,
+            department=state.get("department", self.department),
+            role=state.get("role", self.role),
+            risk_level=state.get("risk_level", "low"),
         )
-        task_desc = state.get("task_description", "")
+
+        self._emit_lifecycle("agent_started", ctx, {
+            "agent": self.name, "task_id": task_id,
+            "trace_id": trace_id, "span_id": span_id,
+        })
+
         messages = [
             {"role": "system", "content": self.get_system_prompt()},
-            {"role": "user", "content": task_desc},
+            {"role": "user", "content": task_description},
         ]
 
-        self.log.info("sre_analysis_start", trace_id=ctx.trace_id)
-        response = await self.call_llm(messages, temperature=0.3, ctx=ctx)
+        response = await self.call_llm(messages, temperature=0.2, ctx=ctx)
 
-        try:
-            sre_output = json.loads(response.content)
-        except json.JSONDecodeError:
-            sre_output = {"raw_response": response.content}
+        content = "" if response is None else getattr(response, "content", "") or ""
+        result = self._safe_json_loads(content)
+        result = self._validate_output(result, SREOutput)
+
+        artifact_id = f"sre_{task_id}_{span_id}"
+        artifact = {
+            "artifact_id": artifact_id,
+            "type": "tech.sre.observability",
+            "created_at_ms": now_ms(),
+            "trace_id": trace_id, "span_id": span_id,
+            "agent": self.name, "payload": result,
+        }
 
         artifacts = dict(state.get("artifacts", {}))
-        artifacts["sre_output"] = sre_output
+        artifacts["sre_config"] = artifact
+
+        total_tokens = int(getattr(response, "total_tokens", 0) or 0)
+        prev_tokens = int(state.get("token_usage", 0) or 0)
+        end_ms = now_ms()
+        duration_ms = end_ms - start_ms
+
+        backend_output = self._build_output(
+            task_id=task_id,
+            status="completed",
+            summary=result.get("summary", "SRE observability config generated."),
+            artifact_id=artifact_id, artifact_type=artifact["type"],
+            telemetry={"duration_ms": duration_ms, "tokens_used": total_tokens,
+                        "span_id": span_id, "trace_id": trace_id},
+        )
+
+        self._emit_lifecycle("agent_completed", ctx, {
+            "agent": self.name, "task_id": task_id,
+            "duration_ms": duration_ms, "artifact_ids": [artifact_id],
+            "tokens_used": total_tokens,
+        })
 
         return {
-            **state,
-            "artifacts": artifacts,
-            "status": "sre_complete",
-            "current_agent": self.name,
-            "token_usage": state.get("token_usage", 0) + response.total_tokens,
+            **state, "status": "sre_complete", "current_agent": self.name,
+            "trace_id": trace_id, "last_run_ms": end_ms,
+            "duration_ms": duration_ms, "token_usage": prev_tokens + total_tokens,
+            "artifacts": artifacts, "output": backend_output,
         }

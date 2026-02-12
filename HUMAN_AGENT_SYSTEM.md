@@ -1,5 +1,7 @@
 # Human-Agent Pairing System — Recommendation Design
 
+> **Updated Feb 2026**: Reflects implemented `ApprovalGate` state machine (`core/approval_gate.py`), `BudgetEnforcer` (`core/budget.py`), and `TraceContext` (`core/tracing.py`). All agent actions now flow through mandatory Chokepoint Gateways.
+
 ## 1. Core Concept: 1 Agent ↔ 1 Human
 
 Every AI Agent is a **personal assistant** to a specific human employee. The human is always the **supervisor** — agents propose, humans approve. Agents handle execution, coordination, and reporting while humans maintain full control.
@@ -177,29 +179,40 @@ Date: 2026-02-12
 
 Humans approve or reject agent actions through whichever channel they prefer.
 
+> **✅ Implemented**: `ApprovalGate` (`core/approval_gate.py`) provides the backend state machine (PENDING → APPROVED/REJECTED). When `PolicyEngine` returns `require_approval`, execution auto-pauses. `IdempotencyGuard` ensures no duplicate side-effects if the approval flow is retried.
+
 ### **5.1 Approval Flow**
 
 ```mermaid
 sequenceDiagram
     participant A as Agent
-    participant S as System
+    participant GW as Chokepoint Gateway
+    participant PE as PolicyEngine + ApprovalGate
     participant WA as WhatsApp
     participant EM as Email
     participant H as Human
 
-    A->>S: Request approval (e.g., "Deploy to production")
-    S->>WA: "🔔 Approval needed: Deploy v2.1 to production. Risk: HIGH. Reply 'Approve' or 'Reject'"
-    S->>EM: HTML email with [Approve] [Reject] buttons + context
+    A->>GW: call_tool("Deploy to production")
+    GW->>PE: Evaluate policy context
+    PE-->>GW: REQUIRE_APPROVAL (risk=high)
+    GW->>PE: ApprovalGate.check()
+    PE-->>A: ApprovalResult(approved=false, status=PENDING)
+
+    par Notify human on all channels
+        PE->>WA: "🔔 Approval needed: Deploy v2.1. Risk: HIGH"
+        PE->>EM: HTML email with [Approve] [Reject] buttons
+    end
     
     alt Human replies via WhatsApp
         H->>WA: "Approve"
-        WA->>S: Parse → {action: "approve"}
+        WA->>PE: ApprovalGate.approve(approval_id, approver)
     else Human clicks email button
         H->>EM: Click [Approve]
-        EM->>S: Webhook → {action: "approve"}
+        EM->>PE: ApprovalGate.approve(approval_id, approver)
     end
     
-    S->>A: Resume execution with approval
+    PE-->>GW: ApprovalResult(approved=true)
+    GW->>A: Resume execution (IdempotencyGuard prevents dup)
     A->>WA: "✅ Deploy v2.1 completed successfully"
 ```
 
@@ -368,15 +381,22 @@ graph TD
         A1[Agent 1] & A2[Agent 2] & A3[Agent N]
     end
 
-    subgraph "Execution Layer"
-        ModelGW[Model Gateway - LiteLLM]
-        Tools[Tool Sandbox]
-        RAG[(Knowledge Base)]
+    subgraph "Chokepoint Gateways (Implemented ✅)"
+        LC[LLMClient]
+        TB[ToolBroker]
+        DAL[DataAccessLayer]
+    end
+
+    subgraph "Control Plane (Implemented ✅)"
+        PE[PolicyEngine + ApprovalGate]
+        BE[BudgetEnforcer]
+        AU[AuditService - Hash Chain]
+        TC[TraceContext]
+        CB[CircuitBreaker + DLQ]
     end
 
     subgraph "Data Layer"
         DB[(PostgreSQL + RLS)]
-        Audit[(Audit Log)]
         Artifacts[(S3 Artifacts)]
     end
 
@@ -387,9 +407,11 @@ graph TD
     PairMap --> A1 & A2 & A3
 
     A1 & A2 & A3 <--> GS
-    A1 & A2 & A3 <--> ModelGW & Tools & RAG
+    A1 & A2 & A3 --> LC & TB & DAL
+    LC & TB & DAL --> PE & BE & AU & TC
+    LC --> CB
     A1 & A2 & A3 --> Cal & Zoom
-    A1 & A2 & A3 --> DB & Audit & Artifacts
+    DAL --> DB & Artifacts
 
     A1 & A2 & A3 -->|Reply| Router
     Router -->|Same Channel| WA & Email & Dash

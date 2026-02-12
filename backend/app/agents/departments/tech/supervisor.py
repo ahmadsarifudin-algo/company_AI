@@ -1,141 +1,144 @@
 """
-TechSupervisor — Department-level orchestrator for Tech Development.
+TechSupervisor — Decomposes technical tasks and delegates to specialist agents.
 
-Responsibilities:
-- Decompose high-level requests into Plan JSON tasks
-- Assign tasks to appropriate specialist agents
-- Manage dependencies between tasks
-- Monitor progress and handle retries
-- Aggregate results into final deliverables
-
-Does NOT execute tools directly — delegates everything to specialists.
+Key goals:
+- Deterministic output: always produce a SupervisorPlanOutput-compatible payload
+- Telemetry: duration_ms, token deltas, span_id
+- Artifact-driven: produce artifact_id + artifact payload for dashboard rendering
 """
 
-import json
-from typing import Any
+from __future__ import annotations
 
+import json
+import uuid
 import structlog
 
 from app.agents.base_agent import BaseAgent
+from app.agents.output_schemas import TechPlanOutput
 from app.agents.state import AgentState
-from app.core.llm_client import AgentContext
+from app.core.telemetry import now_ms
 
 logger = structlog.get_logger()
 
-PLAN_SCHEMA = """\
-Output a valid JSON plan with this structure:
-{
-  "goal": "Feature objective",
-  "project_id": "string",
-  "constraints": {
-    "deadline": "ISO date or null",
-    "environment": "dev|staging|prod",
-    "budget_limit_usd": number
-  },
-  "tasks": [
-    {
-      "id": "T1",
-      "owner_agent": "AgentName",
-      "depends_on": [],
-      "input": "description or artifact reference",
-      "tools_allowed": [],
-      "output_artifact": "artifact name",
-      "definition_of_done": "measurable criteria"
-    }
-  ],
-  "risk": ["identified risks"],
-  "approval_required": ["steps needing human approval"]
-}
-"""
-
-AVAILABLE_AGENTS = {
-    "ProductAnalyst": "PRD generation, acceptance criteria, KPI definition",
-    "Architect": "HLD/LLD design, API contracts, threat model",
-    "BackendEngineer": "Server-side code generation, unit tests, PRs",
-    "FrontendEngineer": "UI implementation, component tests, PRs",
-    "QA": "Test plan generation, acceptance validation, release blocking",
-    "DevOps": "CI/CD configuration, deployment preparation, rollback plans",
-    "SRE": "Monitoring rules, incident response, postmortem drafting",
-    "Security": "CVE scanning, dependency audit, secret detection",
-    "DataEngineer": "ETL pipeline design, data quality validation",
-    "TechnicalWriter": "API documentation, changelogs, ADRs",
-}
-
 
 class TechSupervisor(BaseAgent):
-    """Tech Department Supervisor — orchestrates specialist agents.
+    """
+    Decomposes technical tasks and orchestrates specialist agents.
 
-    Takes a high-level request and produces a structured Plan JSON
-    that assigns tasks to the appropriate specialist agents.
+    Notes:
+    - Assumes orchestration layer already injected trace_id, task_id, etc.
+    - Policy checks & tool sandboxing happen in the gateway / broker layer.
     """
 
-    def get_system_prompt(self) -> str:
-        agent_list = "\n".join(
-            f"  - {name}: {desc}" for name, desc in AVAILABLE_AGENTS.items()
-        )
+    name = "tech_supervisor"
+    department = "tech"
+    role = "supervisor"
+
+    def _default_system_prompt(self) -> str:
         return (
-            "You are the Tech Department Supervisor for an enterprise AI system.\n\n"
-            "Your role:\n"
-            "1. Break down requests into concrete, actionable tasks\n"
-            "2. Assign each task to the most appropriate specialist agent\n"
-            "3. Define clear dependencies between tasks\n"
-            "4. Identify risks and approval requirements\n"
-            "5. Set measurable definition-of-done for each task\n\n"
-            "You do NOT execute any tools yourself. You only produce plans.\n\n"
-            f"Available specialist agents:\n{agent_list}\n\n"
-            f"Output format:\n{PLAN_SCHEMA}\n"
-            "Respond ONLY with valid JSON. No markdown, no explanation."
+            "You are the Tech Department Supervisor.\n\n"
+            "Responsibilities:\n"
+            "1) Analyze incoming technical tasks\n"
+            "2) Decompose into sub-tasks for specialist agents\n"
+            "3) Assign priorities and dependencies\n"
+            "4) Estimate effort and timeline\n\n"
+            "Available agents:\n"
+            "- product_analyst: PRD, acceptance criteria, KPIs\n"
+            "- architect: HLD/LLD, API contracts, threat model\n"
+            "- backend_engineer: Backend code, tests, PR descriptions\n"
+            "- frontend_engineer: UI components, tests, PR descriptions\n"
+            "- qa: Test plans, coverage analysis, release readiness\n"
+            "- devops: CI/CD, Dockerfiles, deployment manifests\n"
+            "- sre: Monitoring, alerts, runbooks, postmortem\n"
+            "- security: Vuln scanning, OWASP review, secrets audit\n"
+            "- data_engineer: Data pipelines, schema design, migrations\n"
+            "- technical_writer: API docs, changelogs, ADRs\n\n"
+            "Return ONLY valid JSON (no markdown), with keys:\n"
+            '{"tasks": [{"task_id":"","description":"","assigned_to":"","priority":"medium","depends_on":[]}], '
+            '"summary": "", "estimated_steps": 0}\n'
         )
 
     async def process(self, state: AgentState) -> AgentState:
-        """Decompose request into Plan JSON and return updated state."""
+        start_ms = now_ms()
+        span_id = uuid.uuid4().hex
+
+        task_id = state.get("task_id", "")
+        trace_id = state.get("trace_id", "")
+        task_description = state.get("task_description", "")
+
         ctx = self.get_context(
-            task_id=state.get("task_id", ""),
-            trace_id=state.get("trace_id", ""),
+            task_id=task_id,
+            trace_id=trace_id,
+            span_id=span_id,
+            department=state.get("department", self.department),
+            role=state.get("role", self.role),
+            risk_level=state.get("risk_level", "low"),
         )
+
+        self._emit_lifecycle("agent_started", ctx, {
+            "agent": self.name, "task_id": task_id,
+            "trace_id": trace_id, "span_id": span_id,
+        })
 
         messages = [
             {"role": "system", "content": self.get_system_prompt()},
-            {"role": "user", "content": state.get("task_description", "")},
+            {"role": "user", "content": task_description},
         ]
-
-        self.log.info(
-            "supervisor_planning",
-            trace_id=ctx.trace_id,
-            task=state.get("task_description", "")[:100],
-        )
 
         response = await self.call_llm(messages, temperature=0.3, ctx=ctx)
 
-        # Parse Plan JSON
-        try:
-            plan = json.loads(response.content)
-            task_count = len(plan.get("tasks", []))
-        except json.JSONDecodeError:
-            plan = {"raw_response": response.content, "tasks": []}
-            task_count = 0
+        content = "" if response is None else getattr(response, "content", "") or ""
+        result = self._safe_json_loads(content)
+        result = self._validate_output(result, TechPlanOutput)
 
-        self.log.info(
-            "supervisor_plan_complete",
-            trace_id=ctx.trace_id,
-            task_count=task_count,
-            cost_usd=response.cost_usd,
-        )
-
-        # Update state with plan
-        messages_out = list(state.get("messages", []))
-        messages_out.append(
-            {"role": "assistant", "content": json.dumps(plan, indent=2)}
-        )
+        artifact_id = f"tech_plan_{task_id}_{span_id}"
+        artifact = {
+            "artifact_id": artifact_id,
+            "type": "tech.supervisor.plan",
+            "created_at_ms": now_ms(),
+            "trace_id": trace_id,
+            "span_id": span_id,
+            "agent": self.name,
+            "payload": result,
+        }
 
         artifacts = dict(state.get("artifacts", {}))
-        artifacts["plan_json"] = plan
+        artifacts["tech_plan"] = artifact
+
+        total_tokens = int(getattr(response, "total_tokens", 0) or 0)
+        prev_tokens = int(state.get("token_usage", 0) or 0)
+
+        end_ms = now_ms()
+        duration_ms = end_ms - start_ms
+
+        backend_output = self._build_output(
+            task_id=task_id,
+            status="completed",
+            summary=result.get("summary", "Tech task plan generated."),
+            artifact_id=artifact_id,
+            artifact_type=artifact["type"],
+            telemetry={
+                "duration_ms": duration_ms,
+                "tokens_used": total_tokens,
+                "span_id": span_id,
+                "trace_id": trace_id,
+            },
+        )
+
+        self._emit_lifecycle("agent_completed", ctx, {
+            "agent": self.name, "task_id": task_id,
+            "duration_ms": duration_ms, "artifact_ids": [artifact_id],
+            "tokens_used": total_tokens,
+        })
 
         return {
             **state,
-            "messages": messages_out,
-            "artifacts": artifacts,
-            "status": "planned",
+            "status": "tech_plan_complete",
             "current_agent": self.name,
-            "token_usage": state.get("token_usage", 0) + response.total_tokens,
+            "trace_id": trace_id,
+            "last_run_ms": end_ms,
+            "duration_ms": duration_ms,
+            "token_usage": prev_tokens + total_tokens,
+            "artifacts": artifacts,
+            "output": backend_output,
         }

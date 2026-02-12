@@ -49,16 +49,20 @@ class ChatResponse(BaseModel):
 
 
 class AuditLogResponse(BaseModel):
-    """Response for audit log entries."""
+    """Response for audit log entries — maps to AuditEvent model."""
 
     id: str
     department: str
-    agent_name: str
-    action_type: str
-    details: str | None = None
-    resource_scope: str | None = None
-    cost_estimate: float | None = None
-    execution_time_ms: float | None = None
+    agent_id: str
+    event_type: str
+    reason: str | None = None
+    resource: str | None = None
+    cost_usd: float | None = None
+    latency_ms: int | None = None
+    risk_level: str | None = None
+    tool_name: str | None = None
+    decision: str | None = None
+    error_code: str | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -69,4 +73,4 @@ class CostSummaryResponse(BaseModel):
 
     total_entries: int
     total_cost_usd: float
-    by_action_type: dict[str, Any]
+    by_event_type: dict[str, Any]

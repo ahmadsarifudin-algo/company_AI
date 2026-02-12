@@ -1,5 +1,7 @@
 # Administrator Control & Governance Design
 
+> **Updated Feb 2026**: Reflects implemented control plane (Modules 0-7). ABAC PolicyEngine, BudgetEnforcer, and ApprovalGate are now live.
+
 This document outlines the "Admin Layer" for managing model orchestration, cost efficiency, user policies, and database integrations.
 
 ## 1. Core Component: Model Gateway (Efficiency Orchestrator)
@@ -85,6 +87,8 @@ A visual dashboard to track spend across Tech, Finance, HR, Sales, Marketing, Le
     *   **Auto-Downgrade**: When budget exceeds 90%, auto-switch non-critical agents to lower tier.
     *   **Hard Stop**: Automatically block requests if budget exceeded (optional).
 
+> **✅ Implemented**: `BudgetEnforcer` (`core/budget.py`) provides atomic budget reservation with Redis Lua scripts. Supports per-department and per-agent soft/hard limits. Budget check runs on every LLM call and tool execution via the Chokepoint Gateways.
+
 ### **2.2 Estimated Monthly Cost by Tier**
 
 | Tier | Agents | Est. Monthly Cost | % of Total |
@@ -101,7 +105,24 @@ A visual dashboard to track spend across Tech, Finance, HR, Sales, Marketing, Le
 
 ## 3. General Policy & Governance
 
-### **3.1 Global System Prompts & Guardrails**
+### **3.1 ABAC Policy Engine (Implemented ✅)**
+
+The `PolicyEngine` (`core/policy_engine.py`) evaluates every action against YAML rules (`policies/default.yaml`). 8 rules are currently active:
+
+| Rule | Condition | Decision |
+|------|-----------|----------|
+| PII Protection | resource sensitivity = PII | require_approval + data ticket |
+| Finance Approval | action = transfer/payment > $100K | require_approval |
+| After-Hours Block | time outside 06:00-22:00 | deny |
+| High-Risk Tools | tool risk ≥ critical | require_approval |
+| Legal Restrictions | department = legal, action = external_comm | require_approval |
+| External Communications | action = send_email/post_public | require_approval |
+| Payroll Access | resource = payroll/salary | require_approval |
+| Write Audit | action = write | allow + log_full_payload |
+
+Admins can add/edit rules by modifying `policies/default.yaml` — no code changes needed.
+
+### **3.2 Global System Prompts & Guardrails**
 Admins can define the "Constitution" that all agents must follow.
 
 *   **Policy Editor**:
@@ -109,12 +130,12 @@ Admins can define the "Constitution" that all agents must follow.
     *   "Sensitive Data Redaction": Toggle [ON/OFF] to auto-mask PII (emails, SSNs) before sending to LLM.
     *   "Forbidden Topics": List of keywords to block.
 
-### **3.2 User Administration**
+### **3.3 User Administration**
 *   **Role Management**:
     *   **Super Admin**: Full access to all settings.
     *   **Department Admin**: Can only view/edit their department's budget and agents.
     *   **Operator**: Can only use the "Claw" dashboard to run tasks.
-*   **Audit Log**: Who changed what policy and when.
+*   **Audit Log**: SHA-256 hash chain audit trail — who changed what policy and when. Tamper-evident via `AuditService.verify_chain_integrity()`.
 
 ---
 
@@ -237,3 +258,19 @@ Track per-agent performance metrics:
 6.  **Version Everything**: All config changes (including tier assignments) must be versioned with rollback capability.
 7.  **Evaluate Continuously**: Use LLM-as-Judge to score agent outputs and track KPIs over time — correlate quality with model tier.
 8.  **Budget Per Tier**: Set separate budget caps for each tier to prevent Advanced tier from consuming entire budget.
+
+---
+
+## 9. Implemented Control Plane (✅ Live)
+
+The following governance components are fully implemented in the codebase:
+
+| Component | File | Admin Use Case |
+|-----------|------|--------------|
+| **PolicyEngine** | `core/policy_engine.py` | Edit YAML rules → instant policy changes |
+| **BudgetEnforcer** | `core/budget.py` | Set soft/hard limits per dept & agent |
+| **ApprovalGate** | `core/approval_gate.py` | Auto-pause on high-risk → human approve/reject |
+| **MetricsCollector** | `core/metrics.py` | Real-time cost/success dashboard |
+| **AuditService** | `services/audit_service.py` | Tamper-evident hash chain audit trail |
+| **CircuitBreaker** | `core/resilience.py` | Auto-failover on provider failures |
+| **TraceContext** | `core/tracing.py` | End-to-end request tracing |

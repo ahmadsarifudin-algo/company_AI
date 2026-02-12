@@ -1,85 +1,112 @@
 """
-TechnicalWriterAgent — API documentation, changelogs, and ADRs.
+TechnicalWriterAgent — API docs, changelogs, ADRs, README updates.
 
-Responsibilities:
-- Generate API documentation from code/specs
-- Maintain changelogs and release notes
-- Create Architecture Decision Records (ADRs)
-- Update internal wiki and knowledge base
+Key goals:
+- Deterministic output: always produce a TechnicalWriterOutput-compatible payload
+- Telemetry: duration_ms, token deltas, span_id
+- Artifact-driven: produce artifact_id + artifact payload for dashboard rendering
 """
 
-import json
+from __future__ import annotations
 
+import json
+import uuid
 import structlog
 
 from app.agents.base_agent import BaseAgent
+from app.agents.output_schemas import TechnicalWriterOutput
 from app.agents.state import AgentState
+from app.core.telemetry import now_ms
 
 logger = structlog.get_logger()
 
 
 class TechnicalWriterAgent(BaseAgent):
-    """Generates technical documentation from code and specs."""
+    """Generates API docs, changelogs, ADRs, and README updates."""
 
-    def get_system_prompt(self) -> str:
+    name = "technical_writer_agent"
+    department = "tech"
+    role = "agent"
+
+    def _default_system_prompt(self) -> str:
         return (
             "You are a Technical Writer Agent in the Tech Department.\n\n"
-            "Your responsibilities:\n"
-            "1. Generate API documentation (OpenAPI / Swagger style)\n"
-            "2. Write changelogs and release notes\n"
-            "3. Create Architecture Decision Records (ADRs)\n"
-            "4. Maintain README files and getting-started guides\n"
-            "5. Update internal wiki and knowledge base articles\n\n"
-            "Output format (JSON):\n"
-            "{\n"
-            '  "documents": [\n'
-            '    {"type": "api_doc|changelog|adr|readme|wiki",\n'
-            '     "title": "...",\n'
-            '     "content": "markdown content...",\n'
-            '     "path": "docs/..."}\n'
-            "  ],\n"
-            '  "summary": "What was documented and why"\n'
-            "}\n"
-            "Respond ONLY with valid JSON."
+            "Responsibilities:\n"
+            "1) Generate API documentation (OpenAPI/Swagger)\n"
+            "2) Write changelogs from commit history\n"
+            "3) Create Architecture Decision Records (ADRs)\n"
+            "4) Update README files\n\n"
+            "Return ONLY valid JSON (no markdown), with keys:\n"
+            '{"api_docs": {}, "changelog": [], "adr": {}, "readme_updates": []}\n'
         )
 
     async def process(self, state: AgentState) -> AgentState:
+        start_ms = now_ms()
+        span_id = uuid.uuid4().hex
+
+        task_id = state.get("task_id", "")
+        trace_id = state.get("trace_id", "")
+        task_description = state.get("task_description", "")
+
         ctx = self.get_context(
-            task_id=state.get("task_id", ""),
-            trace_id=state.get("trace_id", ""),
+            task_id=task_id, trace_id=trace_id, span_id=span_id,
+            department=state.get("department", self.department),
+            role=state.get("role", self.role),
+            risk_level=state.get("risk_level", "low"),
         )
-        task_desc = state.get("task_description", "")
-        artifacts_in = state.get("artifacts", {})
-        # Build context from whatever artifacts are available
-        context_parts = [f"Task: {task_desc}"]
-        if "architecture" in artifacts_in:
-            context_parts.append(f"Architecture: {json.dumps(artifacts_in['architecture'], indent=2)}")
-        if "backend_code" in artifacts_in:
-            endpoints = artifacts_in["architecture"].get("lld", {}).get("api_endpoints", []) if "architecture" in artifacts_in else []
-            context_parts.append(f"API Endpoints: {json.dumps(endpoints)}")
-        if "prd" in artifacts_in:
-            context_parts.append(f"PRD Title: {artifacts_in['prd'].get('title', '')}")
+
+        self._emit_lifecycle("agent_started", ctx, {
+            "agent": self.name, "task_id": task_id,
+            "trace_id": trace_id, "span_id": span_id,
+        })
 
         messages = [
             {"role": "system", "content": self.get_system_prompt()},
-            {"role": "user", "content": "\n\n".join(context_parts)},
+            {"role": "user", "content": task_description},
         ]
 
-        self.log.info("doc_generation_start", trace_id=ctx.trace_id)
-        response = await self.call_llm(messages, temperature=0.4, ctx=ctx)
+        response = await self.call_llm(messages, temperature=0.3, ctx=ctx)
 
-        try:
-            docs_output = json.loads(response.content)
-        except json.JSONDecodeError:
-            docs_output = {"raw_response": response.content, "documents": []}
+        content = "" if response is None else getattr(response, "content", "") or ""
+        result = self._safe_json_loads(content)
+        result = self._validate_output(result, TechnicalWriterOutput)
 
-        artifacts = dict(artifacts_in)
-        artifacts["documentation"] = docs_output
+        artifact_id = f"docs_{task_id}_{span_id}"
+        artifact = {
+            "artifact_id": artifact_id,
+            "type": "tech.technical_writer.documentation",
+            "created_at_ms": now_ms(),
+            "trace_id": trace_id, "span_id": span_id,
+            "agent": self.name, "payload": result,
+        }
+
+        artifacts = dict(state.get("artifacts", {}))
+        artifacts["documentation"] = artifact
+
+        total_tokens = int(getattr(response, "total_tokens", 0) or 0)
+        prev_tokens = int(state.get("token_usage", 0) or 0)
+        end_ms = now_ms()
+        duration_ms = end_ms - start_ms
+
+        backend_output = self._build_output(
+            task_id=task_id,
+            status="completed",
+            summary=result.get("summary", "Documentation generated."),
+            artifact_id=artifact_id, artifact_type=artifact["type"],
+            telemetry={"duration_ms": duration_ms, "tokens_used": total_tokens,
+                        "span_id": span_id, "trace_id": trace_id},
+        )
+
+        self._emit_lifecycle("agent_completed", ctx, {
+            "agent": self.name, "task_id": task_id,
+            "duration_ms": duration_ms, "artifact_ids": [artifact_id],
+            "tokens_used": total_tokens,
+        })
 
         return {
-            **state,
-            "artifacts": artifacts,
-            "status": "documentation_complete",
+            **state, "status": "documentation_complete",
             "current_agent": self.name,
-            "token_usage": state.get("token_usage", 0) + response.total_tokens,
+            "trace_id": trace_id, "last_run_ms": end_ms,
+            "duration_ms": duration_ms, "token_usage": prev_tokens + total_tokens,
+            "artifacts": artifacts, "output": backend_output,
         }

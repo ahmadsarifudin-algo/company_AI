@@ -99,10 +99,11 @@ graph TD
 - **Endpoints**: `/api/v1/submit-request`, `/api/v1/status/{id}`, `/api/v1/feedback`, `/api/v1/approve/{thread_id}`
 - **Middleware**:
   - JWT Validation + SSO Integration
+  - **TraceMiddleware** — auto `trace_id` + `span_id` per request (Implemented ✅)
   - Rate Limiting (per user & per department)
-  - RBAC Enforcement (Check user role vs endpoint)
+  - **ABAC PolicyEngine** — context-aware allow/deny/require_approval (Implemented ✅)
   - PII Redaction Layer (mask sensitive data before LLM)
-  - Request Logging
+  - Request Logging + **Hash Chain Audit** (Implemented ✅)
 
 ### 3.2 Workflow Orchestrator (LangGraph)
 - **State Definition**:
@@ -122,17 +123,52 @@ graph TD
   - Enforces max tool calls and execution timeout per task.
 
 ### 3.3 Specialist Agents
-- **Tech Agents**: Use `subprocess` or specialized docker containers for code execution.
-- **Finance Agents**: Read-only DB access to financial ledger via restricted SQL user + RLS.
-- **HR Agents**: Access to HRIS API with PII masking middleware.
-- **Sales Agents**: CRM API access with territory-scoped RBAC.
+
+> **Note**: All agent access to tools, LLMs, and databases flows through the Chokepoint Gateways (§3.5). Agents never call external services directly.
+
+- **Tech Agents**: Code execution via `ToolBroker` → sandboxed containers (E2B/Firecracker).
+- **Finance Agents**: Read-only DB access via `DataAccessLayer` → restricted SQL user + RLS.
+- **HR Agents**: HRIS API access via `ToolBroker` → PII masking enforced by `PolicyEngine`.
+- **Sales Agents**: CRM API access via `ToolBroker` → territory-scoped by `DataAccessLayer`.
 
 ### 3.4 Security & Sandboxing
 - **Code Execution**: **E2B** or **Firecracker MicroVMs** to prevent agents from accessing host system.
-- **Network Policy**: Agents operate in a restricted VPC with allow-listed egress only.
+- **Network Policy**: `NetworkPolicy` class enforces domain-level egress allowlist per tool (Implemented ✅).
 - **Data Isolation**: PostgreSQL **Row-Level Security (RLS)** per department + schema-based isolation.
 - **Secrets**: Agent never receives raw credentials. Backend proxy fetches from Vault on behalf of agent.
-- **Audit Logging**: Asynchronous write to immutable append-only Postgres table for every tool call.
+- **Audit Logging**: `AuditService.emit()` writes to SHA-256 hash chain — tamper-evident, append-only (Implemented ✅).
+
+### 3.5 Chokepoint Gateway Layer (Implemented ✅)
+
+> **Principle**: All side-effects (LLM calls, tool execution, data access) flow through 3 mandatory gateways. Direct use of `requests`, `httpx`, `psycopg`, or `sqlalchemy` in agent code is banned.
+
+| Gateway | File | Responsibilities |
+|---------|------|------------------|
+| **LLMClient** | `core/llm_client.py` | Model routing, prompt hashing, cost estimation, budget hooks, CircuitBreaker |
+| **ToolBroker** | `core/tool_broker.py` | Tool resolution (via ToolRegistry), ABAC check, egress control, sandbox enforcement |
+| **DataAccessLayer** | `core/data_access.py` | Department scoping, field masking, PII obligations, query auditing |
+
+**Supporting components:**
+- **ToolRegistry** (`core/tool_registry.py`) — Static tool registration with metadata (permissions, risk, egress domains)
+- **TaskSandbox** (`core/sandbox.py`) — Per-task file system isolation + auto-cleanup
+- **NetworkPolicy** (`core/sandbox.py`) — Domain-level egress control per tool
+
+### 3.6 Control Plane Modules (Implemented ✅)
+
+| Module | File(s) | Purpose |
+|--------|---------|---------|
+| **ABAC PolicyEngine** | `core/policy_engine.py`, `policies/default.yaml` | YAML rules → allow/deny/require_approval + obligations |
+| **ResourceClassification** | `core/resource_classification.py` | 82 resources mapped to 4 sensitivity levels |
+| **Agent Contracts** | `agents/contracts.py` | AgentInput/OutputSchema + server-derived RiskDeriver |
+| **ApprovalGate** | `core/approval_gate.py` | State machine: PENDING → APPROVED/REJECTED |
+| **IdempotencyGuard** | `core/approval_gate.py` | Prevent duplicate side-effects on retries |
+| **AuditService** | `services/audit_service.py` | `emit()` with SHA-256 hash chain + `verify_chain_integrity()` |
+| **TraceContext** | `core/tracing.py` | End-to-end `trace_id` + `span_id`, Celery propagation |
+| **MetricsCollector** | `core/metrics.py` | Redis-backed cost/duration/success aggregation |
+| **BudgetEnforcer** | `core/budget.py` | Atomic Redis Lua reserve/finalize/release (soft+hard limits) |
+| **CircuitBreaker** | `core/resilience.py` | Half-open recovery, fallback support |
+| **RetryPolicy** | `core/resilience.py` | Taxonomy-based retry (transient=retry, policy=no-retry) |
+| **DeadLetterQueue** | `core/resilience.py` | Failed operations stored for manual replay |
 
 ---
 
@@ -151,16 +187,17 @@ Agents must have persistent context to avoid starting from zero on every task.
 
 ---
 
-## 5. Error Recovery & Retry Strategy
+## 5. Error Recovery & Retry Strategy (Implemented ✅)
 
 ### **5.1 LLM Failure Handling**
-- **Exponential Backoff**: Automatic retry with increasing delay (built into LiteLLM).
-- **Circuit Breaker**: After 3 consecutive failures on a model, route to fallback model.
+- **RetryPolicy** (`core/resilience.py`): Taxonomy-based retry — transient errors retry with exponential backoff, policy/budget/validation errors fail immediately.
+- **CircuitBreaker** (`core/resilience.py`): After 5 consecutive failures on a provider, breaker opens. Requests fail fast or use fallback model. After 60s cooldown → half-open → test recovery.
 - **Fallback Chain**: `GPT-4o` → `Claude 3.5` → `Llama 3` (configurable per department).
 
 ### **5.2 Task Failure Handling**
-- **Max Retries**: Each task in Plan JSON has `"max_retries": 3`.
-- **Dead Letter Queue (DLQ)**: Failed tasks are stored in Redis DLQ with full context for manual review.
+- **Max Retries**: Each task has configurable retry count via `RetryConfig` classes.
+- **Dead Letter Queue**: Failed tasks after max retries stored in `DeadLetterQueue` with full context for manual replay via `dlq.replay(dlq_id, handler)`.
+- **Idempotency**: `IdempotencyGuard` ensures side-effect tools execute at most once per `trace_id:step_id` key.
 - **Partial Recovery**: If a multi-step task fails at step 3/5, resume from the last successful checkpoint.
 
 ---

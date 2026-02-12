@@ -1,0 +1,272 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --bg-primary: #0a0e1a;
+    --bg-secondary: #111827;
+    --bg-card: #1a1f2e;
+    --bg-card-hover: #1f2640;
+    --bg-surface: #252b3d;
+    --bg-elevated: #2d3450;
+    --border: #2d3450;
+    --border-hover: #3d4560;
+    --text-primary: #f0f2f5;
+    --text-secondary: #8b95ad;
+    --text-muted: #5a6580;
+    --accent: #6366f1;
+    --accent-hover: #818cf8;
+    --accent-soft: rgba(99, 102, 241, 0.12);
+    --success: #22c55e;
+    --success-soft: rgba(34, 197, 94, 0.12);
+    --warning: #f59e0b;
+    --warning-soft: rgba(245, 158, 11, 0.12);
+    --danger: #ef4444;
+    --danger-soft: rgba(239, 68, 68, 0.12);
+    --info: #3b82f6;
+    --info-soft: rgba(59, 130, 246, 0.12);
+  }
+
+  * {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+  }
+
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  ::selection {
+    background: var(--accent);
+    color: white;
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 3px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--border-hover);
+  }
+}
+
+@layer components {
+  .card {
+    @apply rounded-xl border transition-all duration-200;
+    background: var(--bg-card);
+    border-color: var(--border);
+  }
+
+  .card:hover {
+    background: var(--bg-card-hover);
+    border-color: var(--border-hover);
+  }
+
+  .stat-card {
+    @apply card p-5;
+  }
+
+  .badge {
+    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium;
+  }
+
+  .badge-success {
+    background: var(--success-soft);
+    color: var(--success);
+  }
+
+  .badge-warning {
+    background: var(--warning-soft);
+    color: var(--warning);
+  }
+
+  .badge-danger {
+    background: var(--danger-soft);
+    color: var(--danger);
+  }
+
+  .badge-info {
+    background: var(--info-soft);
+    color: var(--info);
+  }
+
+  .badge-accent {
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+
+  .badge-neutral {
+    background: var(--bg-surface);
+    color: var(--text-secondary);
+  }
+
+  .btn {
+    @apply inline-flex items-center justify-center px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 cursor-pointer;
+  }
+
+  .btn-primary {
+    background: var(--accent);
+    color: white;
+  }
+
+  .btn-primary:hover {
+    background: var(--accent-hover);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
+  }
+
+  .btn-ghost {
+    background: transparent;
+    color: var(--text-secondary);
+    border: 1px solid var(--border);
+  }
+
+  .btn-ghost:hover {
+    background: var(--bg-surface);
+    color: var(--text-primary);
+    border-color: var(--border-hover);
+  }
+
+  .btn-danger {
+    background: var(--danger-soft);
+    color: var(--danger);
+  }
+
+  .btn-danger:hover {
+    background: var(--danger);
+    color: white;
+  }
+
+  .table-container {
+    @apply card overflow-hidden;
+  }
+
+  .data-table {
+    @apply w-full text-sm;
+  }
+
+  .data-table thead {
+    background: var(--bg-surface);
+  }
+
+  .data-table th {
+    @apply px-4 py-3 text-left font-medium;
+    color: var(--text-secondary);
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  .data-table td {
+    @apply px-4 py-3;
+    border-top: 1px solid var(--border);
+    color: var(--text-primary);
+  }
+
+  .data-table tbody tr {
+    transition: background 0.15s;
+  }
+
+  .data-table tbody tr:hover {
+    background: var(--bg-card-hover);
+  }
+
+  .input-field {
+    @apply w-full px-3 py-2 rounded-lg text-sm outline-none transition-all duration-200;
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    color: var(--text-primary);
+  }
+
+  .input-field:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft);
+  }
+
+  .input-field::placeholder {
+    color: var(--text-muted);
+  }
+
+  .sidebar-link {
+    @apply flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 no-underline;
+    color: var(--text-secondary);
+  }
+
+  .sidebar-link:hover {
+    background: var(--bg-surface);
+    color: var(--text-primary);
+  }
+
+  .sidebar-link.active {
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+
+  .pulse-dot {
+    @apply w-2 h-2 rounded-full;
+    animation: pulse-glow 2s ease-in-out infinite;
+  }
+
+  @keyframes pulse-glow {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+
+  @keyframes slide-up {
+    from {
+      opacity: 0;
+      transform: translateY(12px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .animate-slide-up {
+    animation: slide-up 0.4s ease-out;
+  }
+
+  @keyframes fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
+  .animate-fade-in {
+    animation: fade-in 0.3s ease-out;
+  }
+
+  .shimmer {
+    background: linear-gradient(
+      90deg,
+      var(--bg-card) 25%,
+      var(--bg-surface) 50%,
+      var(--bg-card) 75%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 1.5s infinite;
+  }
+
+  @keyframes shimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
+}

@@ -1,36 +1,54 @@
-"""PayrollAgent — Payroll validation and anomaly detection."""
-
-import json, structlog
+"""PayrollAgent — Payroll validation, anomaly detection, compliance."""
+from __future__ import annotations
+import json, uuid, structlog
 from app.agents.base_agent import BaseAgent
+from app.agents.output_schemas import PayrollOutput
 from app.agents.state import AgentState
+from app.core.telemetry import now_ms
 logger = structlog.get_logger()
 
 class PayrollAgent(BaseAgent):
-    """Validates payroll data, detects anomalies, benchmarks salaries."""
+    """Validates payroll, detects anomalies, and verifies compliance."""
+    name = "payroll_agent"; department = "hr"; role = "agent"
 
-    def get_system_prompt(self) -> str:
+    def _default_system_prompt(self) -> str:
         return (
-            "You are a Payroll Validation Agent in the HR Department.\n\n"
-            "Responsibilities:\n"
-            "1. Validate payroll calculations and deductions\n"
-            "2. Detect anomalies (unusual overtime, duplicate payments)\n"
-            "3. Benchmark salaries against market data\n"
-            "4. Verify tax withholding compliance (PPh 21)\n"
-            "5. Generate payroll summary reports\n\n"
-            "Output JSON: {\"validation\": {\"total_employees\": 0, \"total_gross\": 0, "
-            "\"anomalies\": [{\"employee_id\": \"\", \"type\": \"\", \"details\": \"\"}]}, "
-            "\"compliance_status\": \"compliant|issues_found\"}"
+            "You are a Payroll Agent in the HR Department.\n\n"
+            "Responsibilities:\n1) Validate payroll calculations\n"
+            "2) Detect anomalies and outliers\n3) Verify tax and labor compliance\n\n"
+            "Return ONLY valid JSON:\n"
+            '{"validation": {}, "anomalies": [], "compliance_status": "compliant"}\n'
         )
 
     async def process(self, state: AgentState) -> AgentState:
-        ctx = self.get_context(task_id=state.get("task_id", ""), trace_id=state.get("trace_id", ""))
-        messages = [{"role": "system", "content": self.get_system_prompt()},
-                    {"role": "user", "content": state.get("task_description", "")}]
-        response = await self.call_llm(messages, temperature=0.2, ctx=ctx)
-        try: result = json.loads(response.content)
-        except json.JSONDecodeError: result = {"raw_response": response.content}
-        artifacts = dict(state.get("artifacts", {}))
-        artifacts["payroll_result"] = result
-        return {**state, "artifacts": artifacts, "status": "payroll_complete",
-                "current_agent": self.name,
-                "token_usage": state.get("token_usage", 0) + response.total_tokens}
+        start_ms = now_ms(); span_id = uuid.uuid4().hex
+        task_id = state.get("task_id", ""); trace_id = state.get("trace_id", "")
+        ctx = self.get_context(task_id=task_id, trace_id=trace_id, span_id=span_id,
+            department=state.get("department", self.department), role=state.get("role", self.role),
+            risk_level=state.get("risk_level", "medium"))
+        self._emit_lifecycle("agent_started", ctx, {"agent": self.name, "task_id": task_id,
+            "trace_id": trace_id, "span_id": span_id})
+        response = await self.call_llm([{"role": "system", "content": self.get_system_prompt()},
+            {"role": "user", "content": state.get("task_description", "")}], temperature=0.1, ctx=ctx)
+        content = "" if response is None else getattr(response, "content", "") or ""
+        result = self._safe_json_loads(content)
+        result = self._validate_output(result, PayrollOutput)
+        artifact_id = f"payroll_{task_id}_{span_id}"
+        artifact = {"artifact_id": artifact_id, "type": "hr.payroll.validation",
+            "created_at_ms": now_ms(), "trace_id": trace_id, "span_id": span_id,
+            "agent": self.name, "payload": result}
+        artifacts = dict(state.get("artifacts", {})); artifacts["payroll"] = artifact
+        total_tokens = int(getattr(response, "total_tokens", 0) or 0)
+        prev_tokens = int(state.get("token_usage", 0) or 0)
+        end_ms = now_ms(); duration_ms = end_ms - start_ms
+        backend_output = self._build_output(
+            task_id=task_id, status="completed",
+            summary=result.get("summary", "Payroll validation completed."),
+            artifact_id=artifact_id, artifact_type=artifact["type"],
+            telemetry={"duration_ms": duration_ms, "tokens_used": total_tokens,
+                        "span_id": span_id, "trace_id": trace_id})
+        self._emit_lifecycle("agent_completed", ctx, {"agent": self.name, "task_id": task_id,
+            "duration_ms": duration_ms, "artifact_ids": [artifact_id], "tokens_used": total_tokens})
+        return {**state, "status": "payroll_complete", "current_agent": self.name,
+            "trace_id": trace_id, "last_run_ms": end_ms, "duration_ms": duration_ms,
+            "token_usage": prev_tokens + total_tokens, "artifacts": artifacts, "output": backend_output}
