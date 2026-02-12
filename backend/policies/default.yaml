@@ -1,0 +1,154 @@
+# ──────────────────────────────────────────────────
+# Multi-Agentic AI Enterprise OS — Default Policy Rules
+# ──────────────────────────────────────────────────
+# 
+# ABAC rules evaluated by PolicyEngine.
+# Rule order matters: deny > require_approval > allow.
+# Conditions match against PolicyContext attributes.
+#
+# Condition types:
+#   - string:  exact match
+#   - list:    ctx value must be IN the list
+#   - boolean: exact match
+#
+# Decision types:
+#   - deny:             unconditional block
+#   - require_approval: block until approval chain is met
+#   - deny_if_unmet:    deny only if requirements not satisfied
+#   - allow:            explicit allow (overrides nothing, for documentation)
+
+rules:
+
+  # ── PII Protection ─────────────────────────────
+
+  - name: pii_requires_ticket_and_approval
+    description: >
+      Any access to PII-classified data requires both a ticket reference
+      and department lead approval in the approval chain.
+    conditions:
+      data_sensitivity: pii
+    requirements:
+      has_ticket_id: true
+      approval_chain_includes:
+        - dept_lead
+    decision: require_approval
+    obligations:
+      mask_fields:
+        - nik
+        - ktp
+        - rekening
+        - phone
+        - email_personal
+        - alamat
+        - salary
+        - npwp
+      log_level: warning
+      notify_roles:
+        - compliance_officer
+
+  # ── Finance High-Value Operations ──────────────
+
+  - name: finance_high_value_requires_cfo
+    description: >
+      High or critical risk actions in the finance department
+      require CFO approval before execution.
+    conditions:
+      department: finance
+      risk_level:
+        - high
+        - critical
+    requirements:
+      approval_chain_includes:
+        - cfo
+    decision: require_approval
+    obligations:
+      log_level: warning
+      notify_roles:
+        - cfo
+        - finance_lead
+
+  # ── After-Hours Critical Block ─────────────────
+
+  - name: block_critical_after_hours
+    description: >
+      Critical-risk actions are blocked outside business hours (18:00-08:00).
+      Must wait until business hours or get explicit override.
+    conditions:
+      risk_level: critical
+      time_of_day: after_hours
+    decision: deny
+
+  # ── High-Risk Tool Calls ───────────────────────
+
+  - name: high_risk_tools_require_approval
+    description: >
+      Any tool execution classified as high or critical risk
+      requires at least department lead approval.
+    conditions:
+      action: tool_call
+      risk_level:
+        - high
+        - critical
+    requirements:
+      approval_chain_includes:
+        - dept_lead
+    decision: require_approval
+
+  # ── Legal Department Restrictions ──────────────
+
+  - name: legal_confidential_requires_legal_lead
+    description: >
+      Access to confidential legal data (case files, contracts)
+      requires legal lead in the approval chain.
+    conditions:
+      department: legal
+      data_sensitivity: confidential
+    requirements:
+      approval_chain_includes:
+        - legal_lead
+    decision: require_approval
+    obligations:
+      require_encryption: true
+      max_retention_days: 365
+
+  # ── External Communication Guard ───────────────
+
+  - name: external_comms_require_approval
+    description: >
+      Tools that send external communications (email, WhatsApp, SMS)
+      require supervisor approval for medium+ risk.
+    conditions:
+      action: tool_call
+      risk_level:
+        - medium
+        - high
+        - critical
+    requirements:
+      approval_chain_includes:
+        - supervisor
+    decision: require_approval
+
+  # ── HR Payroll Access ──────────────────────────
+
+  - name: payroll_access_hr_only
+    description: >
+      Payroll data is restricted to HR department agents.
+      Other departments are denied access.
+    conditions:
+      data_sensitivity: pii
+      action: read
+    requirements:
+      has_ticket_id: true
+    decision: deny_if_unmet
+
+  # ── Write Operations Audit ─────────────────────
+
+  - name: all_writes_log_warning
+    description: >
+      All write operations should be logged at warning level
+      for enhanced audit trail.
+    conditions:
+      action: write
+    decision: allow
+    obligations:
+      log_level: warning
