@@ -13,15 +13,34 @@ async function fetchJSON<T>(path: string, init?: RequestInit): Promise<T> {
     ? { Authorization: `Bearer ${token}` }
     : {};
 
-  const res = await fetch(`${API_BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json', ...authHeaders, ...init?.headers },
-    ...init,
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail || `API error ${res.status}`);
+  // 10-second timeout to prevent hanging
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 10_000);
+
+  try {
+    const res = await fetch(`${API_BASE}${path}`, {
+      headers: {
+        'Content-Type': 'application/json',
+        'Cache-Control': 'no-cache',
+        ...authHeaders,
+        ...init?.headers,
+      },
+      signal: controller.signal,
+      ...init,
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(err.detail || `API error ${res.status}`);
+    }
+    return res.json();
+  } catch (e: unknown) {
+    if (e instanceof DOMException && e.name === 'AbortError') {
+      throw new Error('Request timed out — backend may be unreachable');
+    }
+    throw e;
+  } finally {
+    clearTimeout(timeoutId);
   }
-  return res.json();
 }
 
 // ── Types ──────────────────────────────────
@@ -151,12 +170,42 @@ export interface AgentPromptData {
 // ── Task Types ─────────────────────────────
 export interface TaskRow {
   id: string;
+  title: string;
   department: string;
   status: string;
+  priority: string;
+  assigned_agent_id: string | null;
   submitted_by: string | null;
+  channel: string | null;
+  sender_name: string | null;
+  sender_identifier: string | null;
+  agent_response: string | null;
+  trace_id: string | null;
+  original_message: string | null;
   created_at: string | null;
   updated_at: string | null;
   description: string | null;
+  result_json: Record<string, unknown> | null;
+}
+
+export interface TaskExecutionResult {
+  task_id: string;
+  agent_id: string;
+  agent_name: string;
+  status: string;
+  result: Record<string, unknown> | null;
+  token_usage: number;
+  tool_calls: number;
+  execution_time_ms: number;
+  errors: string[];
+}
+
+export interface ChatAgentResponse {
+  agent_id: string;
+  agent_name: string;
+  thread_id: string;
+  response: string;
+  status: string;
 }
 
 export interface SoulTemplate {
@@ -460,7 +509,10 @@ export const api = {
     return fetchJSON<TaskRow[]>(`/tasks${q ? `?${q}` : ''}`);
   },
 
-  createTask: (data: { department: string; description: string }) =>
+  getTask: (taskId: string) =>
+    fetchJSON<TaskRow>(`/tasks/${taskId}`),
+
+  createTask: (data: { title: string; department: string; description?: string; priority?: string; assigned_agent_id?: string }) =>
     fetchJSON<TaskRow>('/tasks', {
       method: 'POST',
       body: JSON.stringify(data),
@@ -469,6 +521,17 @@ export const api = {
   updateTaskStatus: (taskId: string, newStatus: string) =>
     fetchJSON<{ id: string; status: string; message: string }>(`/tasks/${taskId}/status?new_status=${newStatus}`, {
       method: 'PATCH',
+    }),
+
+  executeTask: (taskId: string) =>
+    fetchJSON<TaskExecutionResult>(`/tasks/${taskId}/execute`, {
+      method: 'POST',
+    }),
+
+  chatWithAgent: (agentId: string, message: string, threadId?: string) =>
+    fetchJSON<ChatAgentResponse>('/execution/chat', {
+      method: 'POST',
+      body: JSON.stringify({ agent_id: agentId, message, thread_id: threadId || null }),
     }),
 
   // ── Souls ──────────────────────────────────

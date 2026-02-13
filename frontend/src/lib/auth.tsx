@@ -1,6 +1,7 @@
 'use client';
 
-import { createContext, useContext, useEffect, useState, useCallback, ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useState, ReactNode } from 'react';
+import { useRouter } from 'next/navigation';
 
 export interface AuthUser {
     id: string;
@@ -37,23 +38,72 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const [user, setUser] = useState<AuthUser | null>(null);
     const [token, setToken] = useState<string | null>(null);
     const [loading, setLoading] = useState(true);
+    const router = useRouter();
 
-    // Restore from localStorage on mount
+    // Restore from localStorage on mount, then validate against backend
     useEffect(() => {
-        try {
-            const savedToken = localStorage.getItem(TOKEN_KEY);
-            const savedUser = localStorage.getItem(USER_KEY);
-            if (savedToken && savedUser) {
-                setToken(savedToken);
-                setUser(JSON.parse(savedUser));
+        const validateSession = async () => {
+            try {
+                const savedToken = localStorage.getItem(TOKEN_KEY);
+                const savedUser = localStorage.getItem(USER_KEY);
+                if (!savedToken || !savedUser) {
+                    // Skip auto-login if user explicitly logged out
+                    if (localStorage.getItem('logged_out') === 'true') {
+                        return;
+                    }
+                    // DEV MODE: Auto-login with default admin credentials
+                    try {
+                        const autoRes = await fetch(`${API_BASE}/auth/login`, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ email: 'admin@company.ai', password: 'admin123' }),
+                        });
+                        if (autoRes.ok) {
+                            const { access_token, user: userData } = await autoRes.json();
+                            setToken(access_token);
+                            setUser(userData);
+                            localStorage.setItem(TOKEN_KEY, access_token);
+                            localStorage.setItem(USER_KEY, JSON.stringify(userData));
+                            console.log('🔑 Auto-login: admin@company.ai');
+                        }
+                    } catch { /* backend not reachable, stay logged out */ }
+                    return;
+                }
+
+                // Validate token against backend
+                const res = await fetch(`${API_BASE}/auth/me`, {
+                    headers: { Authorization: `Bearer ${savedToken}` },
+                });
+
+                if (res.ok) {
+                    const freshUser = await res.json();
+                    setToken(savedToken);
+                    setUser(freshUser);
+                    localStorage.setItem(USER_KEY, JSON.stringify(freshUser));
+                } else {
+                    // Token invalid/expired — clear stale session
+                    localStorage.removeItem(TOKEN_KEY);
+                    localStorage.removeItem(USER_KEY);
+                }
+            } catch {
+                // Network error — use cached session as fallback
+                try {
+                    const savedToken = localStorage.getItem(TOKEN_KEY);
+                    const savedUser = localStorage.getItem(USER_KEY);
+                    if (savedToken && savedUser) {
+                        setToken(savedToken);
+                        setUser(JSON.parse(savedUser));
+                    }
+                } catch {
+                    localStorage.removeItem(TOKEN_KEY);
+                    localStorage.removeItem(USER_KEY);
+                }
+            } finally {
+                setLoading(false);
             }
-        } catch {
-            // Corrupted storage — clear it
-            localStorage.removeItem(TOKEN_KEY);
-            localStorage.removeItem(USER_KEY);
-        } finally {
-            setLoading(false);
-        }
+        };
+
+        validateSession();
     }, []);
 
     const login = useCallback(async (email: string, password: string) => {
@@ -70,6 +120,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setUser(userData);
         localStorage.setItem(TOKEN_KEY, access_token);
         localStorage.setItem(USER_KEY, JSON.stringify(userData));
+        localStorage.removeItem('logged_out');
     }, []);
 
     const logout = useCallback(() => {
@@ -77,7 +128,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setUser(null);
         localStorage.removeItem(TOKEN_KEY);
         localStorage.removeItem(USER_KEY);
-    }, []);
+        localStorage.setItem('logged_out', 'true');
+        router.push('/login');
+    }, [router]);
 
     return (
         <AuthContext.Provider value={{

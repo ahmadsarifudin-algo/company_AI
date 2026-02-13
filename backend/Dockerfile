@@ -15,6 +15,7 @@ RUN pip install --no-cache-dir \
     "python-multipart>=0.0.6" \
     "python-jose[cryptography]>=3.3.0" \
     "passlib[bcrypt]>=1.7.4" \
+    "bcrypt>=4.0.0" \
     "sqlalchemy[asyncio]>=2.0.25" \
     "asyncpg>=0.29.0" \
     "alembic>=1.13.0" \

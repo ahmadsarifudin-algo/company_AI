@@ -49,6 +49,7 @@ class AgentState(TypedDict):
     max_tool_calls: int
     max_tokens: int
     human_feedback: str | None
+    system_prompt: str  # agent's system prompt from DB
     status: str  # "pending" | "running" | "waiting_approval" | "completed" | "failed"
     result: dict[str, Any] | None
     trace_id: str  # workflow-scoped trace ID

@@ -101,6 +101,7 @@ class AgentExecutorService:
             agent_id=agent.id,
             agent_name=agent.name,
             agent_tier=agent.tier,
+            system_prompt=agent.system_prompt_override or agent.system_prompt or "",
             max_tool_calls=settings.AGENT_MAX_TOOL_CALLS,
             max_tokens=settings.AGENT_MAX_TOKENS,
         )

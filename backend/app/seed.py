@@ -1,7 +1,8 @@
 """
-Seed Script — Populate database with initial 63 agents across 7 departments.
+Seed Script — Populate database with admin user, 63 agents, and soul templates.
 
 Run: python -m app.seed
+Also auto-runs on startup in development mode (see main.py lifespan).
 """
 
 import asyncio
@@ -12,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.deps import async_session
 from app.core.security import hash_password
 from app.models.agent import Agent
+from app.models.soul import SoulTemplate
 from app.models.user import User
 
 # ── All 63 Agents ────────────────────────────
@@ -94,36 +96,116 @@ ADMIN_USER = {
     "role": "admin",
 }
 
+# ── Soul Templates ───────────────────────────
+SOUL_TEMPLATES = [
+    {
+        "id": "tpl-friendly-default",
+        "name": "Ramah & Informatif",
+        "description": "Hangat, sabar, selalu jelaskan dengan detail. Cocok untuk pengguna baru.",
+        "tone": "friendly",
+        "language_style": "auto",
+        "personality": "Kamu adalah asisten AI yang ramah dan informatif. Kamu selalu menjawab dengan sabar, hangat, dan memberikan penjelasan yang mudah dipahami. Gunakan emoji sesekali untuk membuat percakapan lebih hidup. Jika tidak tahu jawaban, jujur katakan dan tawarkan bantuan lain.",
+        "boundaries": "Jangan mengarang data yang tidak ada. Jangan output JSON kecuali diminta. Jangan bahas topik sensitif (politik, SARA).",
+        "greeting": "Halo! \U0001f60a Saya asisten AI perusahaan. Ada yang bisa saya bantu hari ini?",
+        "icon": "\U0001f60a",
+        "sort_order": 1,
+    },
+    {
+        "id": "tpl-formal-exec",
+        "name": "Formal Executive",
+        "description": "Ringkas, profesional, langsung ke inti. Cocok untuk eksekutif.",
+        "tone": "formal",
+        "language_style": "auto",
+        "personality": "Kamu adalah asisten AI profesional. Jawab dengan ringkas, efisien, dan langsung ke inti masalah. Gunakan bahasa formal. Hindari basa-basi berlebihan. Fokus pada fakta dan solusi.",
+        "boundaries": "Jangan mengarang data. Jangan output JSON kecuali diminta. Hindari emoji berlebihan.",
+        "greeting": "Selamat datang. Ada yang perlu saya bantu?",
+        "icon": "\U0001f454",
+        "sort_order": 2,
+    },
+    {
+        "id": "tpl-casual",
+        "name": "Casual Santai",
+        "description": "Bahasa santai, sedikit humor. Seperti bicara dengan teman kerja.",
+        "tone": "casual",
+        "language_style": "auto",
+        "personality": "Kamu adalah asisten AI yang santai dan asik. Bicara seperti teman kerja yang pintar. Boleh pakai bahasa gaul sesekali, sedikit humor, tapi tetap helpful. Kalau bisa bikin orang senyum sambil dapat informasi, itu sempurna.",
+        "boundaries": "Jangan mengarang data. Jangan terlalu kaku. Jangan output JSON kecuali diminta.",
+        "greeting": "Yoo! Ada yang bisa gue bantu? \U0001f919",
+        "icon": "\U0001f919",
+        "sort_order": 3,
+    },
+    {
+        "id": "tpl-technical",
+        "name": "Teknikal",
+        "description": "Detail teknis, precise, cocok untuk engineer dan developer.",
+        "tone": "technical",
+        "language_style": "auto",
+        "personality": "Kamu adalah asisten AI teknikal. Berikan jawaban yang detail, akurat, dan teknis. Gunakan terminology yang tepat. Sertakan contoh code jika relevan. Jelaskan trade-off dan best practices.",
+        "boundaries": "Jangan mengarang data. Pastikan akurasi teknis. Jangan output JSON kecuali diminta.",
+        "greeting": "Ready. What can I help you with?",
+        "icon": "\U0001f527",
+        "sort_order": 4,
+    },
+    {
+        "id": "tpl-bilingual",
+        "name": "Bilingual ID-EN",
+        "description": "Campuran Indonesia-English natural, code-switching.",
+        "tone": "bilingual",
+        "language_style": "bilingual",
+        "personality": "Kamu adalah asisten AI bilingual. Bicara dengan campuran bahasa Indonesia dan English secara natural, seperti profesional Jakarta yang code-switch. Tetap helpful dan clear.",
+        "boundaries": "Jangan mengarang data. Keep it natural, jangan paksakan campuran jika tidak perlu. Jangan output JSON kecuali diminta.",
+        "greeting": "Hey! Mau tanya apa nih? Feel free to ask anything \U0001f30f",
+        "icon": "\U0001f30f",
+        "sort_order": 5,
+    },
+]
+
 
 async def seed_database():
-    """Populate database with agents and admin user."""
+    """Populate database with admin user, agents, and soul templates."""
     async with async_session() as session:
-        # Check if already seeded
-        result = await session.execute(select(Agent).limit(1))
-        if result.scalar_one_or_none():
-            print("⚠️  Database already seeded. Skipping.")
-            return
-
-        # Create admin user
-        admin = User(
-            email=ADMIN_USER["email"],
-            name=ADMIN_USER["name"],
-            hashed_password=hash_password(ADMIN_USER["password"]),
-            department=ADMIN_USER["department"],
-            role=ADMIN_USER["role"],
+        # ── 1. Ensure admin user exists (always, idempotent) ──
+        result = await session.execute(
+            select(User).where(User.email == ADMIN_USER["email"])
         )
-        session.add(admin)
-        await session.flush()
-        print(f"✅ Admin user created: {admin.email}")
+        admin = result.scalar_one_or_none()
+        if not admin:
+            admin = User(
+                email=ADMIN_USER["email"],
+                name=ADMIN_USER["name"],
+                hashed_password=hash_password(ADMIN_USER["password"]),
+                department=ADMIN_USER["department"],
+                role=ADMIN_USER["role"],
+                is_active=True,
+            )
+            session.add(admin)
+            await session.flush()
+            print(f"✅ Admin user created: {admin.email}")
+        else:
+            print(f"ℹ️  Admin user already exists: {admin.email}")
 
-        # Create all 63 agents
-        for name, dept, tier in AGENTS_DATA:
-            agent = Agent(name=name, department=dept, tier=tier)
-            session.add(agent)
+        # ── 2. Seed agents (if none exist) ──
+        result = await session.execute(select(Agent).limit(1))
+        if not result.scalar_one_or_none():
+            for name, dept, tier in AGENTS_DATA:
+                agent = Agent(name=name, department=dept, tier=tier)
+                session.add(agent)
+            print(f"✅ Seeded {len(AGENTS_DATA)} agents across 8 departments")
+        else:
+            print("ℹ️  Agents already seeded. Skipping.")
+
+        # ── 3. Seed soul templates (if none exist) ──
+        result = await session.execute(select(SoulTemplate).limit(1))
+        if not result.scalar_one_or_none():
+            for tpl_data in SOUL_TEMPLATES:
+                tpl = SoulTemplate(**tpl_data)
+                session.add(tpl)
+            print(f"✅ Seeded {len(SOUL_TEMPLATES)} soul templates")
+        else:
+            print("ℹ️  Soul templates already seeded. Skipping.")
 
         await session.commit()
-        print(f"✅ Seeded {len(AGENTS_DATA)} agents across 7 departments + enterprise")
-        print("   Departments: enterprise(3), tech(11), finance(9), hr(8), sales(6), marketing(8), legal(7), bizdev(7)")
+        print("🌱 Seed complete.")
 
 
 if __name__ == "__main__":
