@@ -23,6 +23,13 @@ class TaskResponse(BaseModel):
     priority: str
     assigned_agent_id: str | None = None
     submitted_by: str | None = None
+    channel: str | None = None
+    sender_name: str | None = None
+    sender_identifier: str | None = None
+    agent_response: str | None = None
+    trace_id: str | None = None
+    original_message: str | None = None
+    result_json: dict | None = None
     created_at: datetime
     updated_at: datetime
 

@@ -8,9 +8,11 @@ Endpoints:
     DELETE /knowledge/{doc_id}     — Delete a document and all its chunks
 """
 
-from fastapi import APIRouter, HTTPException, Query
+from typing import Annotated
 
-from app.core.deps import CurrentUser, DbSession
+from fastapi import APIRouter, Depends, HTTPException, Query
+
+from app.core.deps import DbSession, require_permission
 from app.schemas.knowledge import (
     DeleteResponse,
     DocumentListResponse,
@@ -23,6 +25,10 @@ from app.schemas.knowledge import (
 )
 from app.services.knowledge_service import KnowledgeService
 
+PermKnowledgeIngest = Annotated["User", Depends(require_permission("knowledge.ingest"))]
+PermKnowledgeRead = Annotated["User", Depends(require_permission("knowledge.read"))]
+PermKnowledgeDelete = Annotated["User", Depends(require_permission("knowledge.delete"))]
+
 knowledge_router = APIRouter(prefix="/knowledge", tags=["knowledge"])
 
 
@@ -32,7 +38,7 @@ knowledge_router = APIRouter(prefix="/knowledge", tags=["knowledge"])
 async def ingest_document(
     request: IngestRequest,
     db: DbSession,
-    user: CurrentUser,
+    user: PermKnowledgeIngest,
 ) -> IngestResponse:
     """Ingest a document into the knowledge base.
 
@@ -58,7 +64,7 @@ async def ingest_document(
 async def search_knowledge(
     request: SearchRequest,
     db: DbSession,
-    user: CurrentUser,
+    user: PermKnowledgeRead,
 ) -> SearchResponse:
     """Semantic search across the knowledge base.
 
@@ -84,7 +90,7 @@ async def search_knowledge(
 @knowledge_router.get("/documents", response_model=DocumentListResponse)
 async def list_documents(
     db: DbSession,
-    user: CurrentUser,
+    user: PermKnowledgeRead,
     department: str | None = Query(None),
     doc_type: str | None = Query(None),
     limit: int = Query(50, ge=1, le=200),
@@ -112,7 +118,7 @@ async def list_documents(
 async def delete_document(
     doc_id: str,
     db: DbSession,
-    user: CurrentUser,
+    user: PermKnowledgeDelete,
 ) -> DeleteResponse:
     """Delete a document and all its chunks from the knowledge base."""
     service = KnowledgeService(db)

@@ -31,16 +31,40 @@ async def lifespan(app: FastAPI):
     if settings.APP_ENV == "development":
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+        # Auto-seed admin user + agents if empty
+        from app.seed import seed_database
+        await seed_database()
         print(f"🚀 {settings.APP_NAME} started in {settings.APP_ENV} mode")
         print(f"📊 Database connected: {settings.DATABASE_URL.split('@')[-1]}")
+
+    # Load integration credentials from DB into CredentialVault
+    from app.core.deps import async_session
+    from app.services.orchestration.credential_vault import CredentialVault
+    async with async_session() as db:
+        await CredentialVault.load(db)
+    print("🔑 CredentialVault loaded (env + DB)")
 
     # Register shared tools (email, calendar, drive, whatsapp, search)
     from app.agents.tools.shared_tools import register_shared_tools
     register_shared_tools()
     print("🔧 Shared tools registered (send_email, create_meeting, etc.)")
 
+    # Start Telegram long-polling worker (no webhook URL needed)
+    from app.services.channels.telegram_poller import telegram_poller
+    await telegram_poller.start()
+    if telegram_poller.is_running:
+        print("📡 Telegram poller started (long-polling mode)")
+
+    # Start Email IMAP poller (if configured)
+    from app.services.channels.email_poller import email_poller
+    await email_poller.start()
+    if email_poller.is_running:
+        print("📧 Email poller started (IMAP mode)")
+
     yield
     # Shutdown
+    await telegram_poller.stop()
+    await email_poller.stop()
     await engine.dispose()
     print("👋 Application shutdown complete")
 

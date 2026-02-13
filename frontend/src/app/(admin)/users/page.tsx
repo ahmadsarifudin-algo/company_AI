@@ -29,7 +29,7 @@ export default function UsersPage() {
 
     // Add User modal
     const [showModal, setShowModal] = useState(false);
-    const [newUser, setNewUser] = useState({ email: '', name: '', department: 'finance', role: 'contributor' });
+    const [newUser, setNewUser] = useState({ email: '', name: '', department: 'finance', role: 'contributor', phone_whatsapp: '', telegram_chat_id: '' });
     const [creating, setCreating] = useState(false);
 
     // Invite link result
@@ -64,7 +64,7 @@ export default function UsersPage() {
                 email: result.user.email,
                 expires: new Date(result.expires_at).toLocaleDateString(),
             });
-            setNewUser({ email: '', name: '', department: 'finance', role: 'contributor' });
+            setNewUser({ email: '', name: '', department: 'finance', role: 'contributor', phone_whatsapp: '', telegram_chat_id: '' });
             loadUsers();
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Failed to create user');
@@ -216,6 +216,7 @@ export default function UsersPage() {
                                                 <th style={{ padding: '10px 16px', textAlign: 'left', fontWeight: 600, color: 'var(--text-muted)', fontSize: 11, textTransform: 'uppercase' }}>Name</th>
                                                 <th style={{ padding: '10px 16px', textAlign: 'left', fontWeight: 600, color: 'var(--text-muted)', fontSize: 11, textTransform: 'uppercase' }}>Email</th>
                                                 <th style={{ padding: '10px 16px', textAlign: 'left', fontWeight: 600, color: 'var(--text-muted)', fontSize: 11, textTransform: 'uppercase' }}>Department</th>
+                                                <th style={{ padding: '10px 16px', textAlign: 'left', fontWeight: 600, color: 'var(--text-muted)', fontSize: 11, textTransform: 'uppercase' }}>Contact</th>
                                                 <th style={{ padding: '10px 16px', textAlign: 'left', fontWeight: 600, color: 'var(--text-muted)', fontSize: 11, textTransform: 'uppercase' }}>Status</th>
                                                 <th style={{ padding: '10px 16px', textAlign: 'right', fontWeight: 600, color: 'var(--text-muted)', fontSize: 11, textTransform: 'uppercase' }}>Actions</th>
                                             </tr>
@@ -240,6 +241,19 @@ export default function UsersPage() {
                                                             }}>
                                                                 {u.department}
                                                             </span>
+                                                        </td>
+                                                        <td style={{ padding: '12px 16px' }}>
+                                                            <div style={{ display: 'flex', flexDirection: 'column', gap: 2, fontSize: 11, color: 'var(--text-muted)' }}>
+                                                                {u.phone_whatsapp && (
+                                                                    <span title="WhatsApp">💬 {u.phone_whatsapp}</span>
+                                                                )}
+                                                                {u.telegram_chat_id && (
+                                                                    <span title="Telegram">✈️ {u.telegram_chat_id}</span>
+                                                                )}
+                                                                {!u.phone_whatsapp && !u.telegram_chat_id && (
+                                                                    <span style={{ color: 'var(--text-muted)', opacity: 0.5 }}>—</span>
+                                                                )}
+                                                            </div>
                                                         </td>
                                                         <td style={{ padding: '12px 16px' }}>
                                                             <span style={{
@@ -368,6 +382,42 @@ export default function UsersPage() {
                                                 <option key={r} value={r}>{r.charAt(0).toUpperCase() + r.slice(1)}</option>
                                             ))}
                                         </select>
+                                    </div>
+                                </div>
+
+                                {/* WhatsApp + Telegram */}
+                                <div style={{ display: 'flex', gap: 12, marginBottom: 20 }}>
+                                    <div style={{ flex: 1 }}>
+                                        <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 6 }}>
+                                            💬 WhatsApp Number
+                                        </label>
+                                        <input
+                                            type="text"
+                                            value={newUser.phone_whatsapp}
+                                            onChange={e => setNewUser({ ...newUser, phone_whatsapp: e.target.value })}
+                                            placeholder="+6281234567890"
+                                            style={{
+                                                width: '100%', padding: '10px 12px', borderRadius: 8, fontSize: 14,
+                                                border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)',
+                                                boxSizing: 'border-box',
+                                            }}
+                                        />
+                                    </div>
+                                    <div style={{ flex: 1 }}>
+                                        <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 6 }}>
+                                            ✈️ Telegram
+                                        </label>
+                                        <input
+                                            type="text"
+                                            value={newUser.telegram_chat_id}
+                                            onChange={e => setNewUser({ ...newUser, telegram_chat_id: e.target.value })}
+                                            placeholder="@username or chat ID"
+                                            style={{
+                                                width: '100%', padding: '10px 12px', borderRadius: 8, fontSize: 14,
+                                                border: '1px solid var(--border)', background: 'var(--bg-secondary)', color: 'var(--text-primary)',
+                                                boxSizing: 'border-box',
+                                            }}
+                                        />
                                     </div>
                                 </div>
 

@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     DEBUG: bool = True
     SECRET_KEY: str = "change-me-in-production"
     API_V1_PREFIX: str = "/api/v1"
-    ALLOWED_ORIGINS: str = "http://localhost:3000,http://localhost:8000"
+    ALLOWED_ORIGINS: str = "http://localhost:3000,http://localhost:3001,http://localhost:8000"
 
     # ── Database ─────────────────────────────
     DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@db:5432/company_ai"
@@ -34,6 +34,10 @@ class Settings(BaseSettings):
     # ── LiteLLM ──────────────────────────────
     LITELLM_PROXY_URL: str = "http://litellm:4000"
     LITELLM_MASTER_KEY: str = "sk-litellm-master-key"
+
+    # ── LLM API Keys ────────────────────────
+    GOOGLE_API_KEY: str = ""
+    OPENAI_API_KEY: str = ""
 
     # ── JWT ───────────────────────────────────
     JWT_SECRET_KEY: str = "change-me-in-production"

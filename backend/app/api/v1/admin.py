@@ -5,18 +5,36 @@ All queries use trace_index (fast) except drilldown and policies (audit_events).
 """
 
 from datetime import datetime, timezone, timedelta
-from typing import Optional
+from typing import Annotated, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import func, select, text, case, literal_column
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_db, CurrentUser, AdminOnly, ManagerUp, LeadUp
+from app.core.deps import get_db, require_permission
 from app.models.agent import Agent
 from app.models.audit import AuditEvent
 from app.models.prompt_history import PromptHistory
 from app.models.trace_index import TraceIndex
+
+# ── Granular permission aliases ──────────────
+PermDashboardRead = Annotated["User", Depends(require_permission("dashboard.read"))]
+PermTracesRead = Annotated["User", Depends(require_permission("traces.read"))]
+PermApprovalsRead = Annotated["User", Depends(require_permission("approvals.read"))]
+PermApprovalsDecide = Annotated["User", Depends(require_permission("approvals.decide"))]
+PermPoliciesRead = Annotated["User", Depends(require_permission("policies.read"))]
+PermAgentsRead = Annotated["User", Depends(require_permission("agents.read"))]
+PermAgentsPromptRead = Annotated["User", Depends(require_permission("agents.prompt.read"))]
+PermAgentsPromptEdit = Annotated["User", Depends(require_permission("agents.prompt.edit"))]
+PermAgentsPromptRollback = Annotated["User", Depends(require_permission("agents.prompt.rollback"))]
+PermAgentsTest = Annotated["User", Depends(require_permission("agents.test"))]
+PermAgentsSync = Annotated["User", Depends(require_permission("agents.sync"))]
+PermLLMRead = Annotated["User", Depends(require_permission("settings.llm.read"))]
+PermLLMEdit = Annotated["User", Depends(require_permission("settings.llm.edit"))]
+PermUsersRead = Annotated["User", Depends(require_permission("users.read"))]
+PermUsersCreate = Annotated["User", Depends(require_permission("users.create"))]
+PermUsersDelete = Annotated["User", Depends(require_permission("users.delete"))]
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -27,16 +45,17 @@ _ROLE_LEVEL = {"admin": 4, "manager": 3, "lead": 2, "contributor": 1}
 def _scope_department(query, dept_column, user, explicit_dept: str | None = None):
     """Apply department scoping to a query.
 
-    - admin/manager: see all departments (unless explicit_dept filter is set)
+    - admin: see all departments (unless explicit_dept filter is set)
+    - manager: scoped to own department
     - lead/contributor: always scoped to their own department
     """
     level = _ROLE_LEVEL.get(user.role, 0)
-    if level >= 3:
-        # Admin/Manager can optionally filter
+    if level >= 4:
+        # Admin can optionally filter, but sees all by default
         if explicit_dept:
             query = query.where(dept_column == explicit_dept)
     else:
-        # Lead/Contributor — always scoped to own department
+        # Manager/Lead/Contributor — scoped to own department
         query = query.where(dept_column == user.department)
     return query
 
@@ -59,7 +78,7 @@ def _redact_for_role(event_dict: dict, user) -> dict:
 
 @router.get("/dashboard")
 async def get_dashboard(
-    user: CurrentUser,
+    user: PermDashboardRead,
     hours: int = Query(24, ge=1, le=168),
     db: AsyncSession = Depends(get_db),
 ):
@@ -177,7 +196,7 @@ async def get_dashboard(
 
 @router.get("/traces")
 async def list_traces(
-    user: CurrentUser,
+    user: PermTracesRead,
     status: Optional[str] = None,
     department: Optional[str] = None,
     risk_level: Optional[str] = None,
@@ -248,7 +267,7 @@ async def list_traces(
 @router.get("/traces/{trace_id}")
 async def get_trace_detail(
     trace_id: str,
-    user: CurrentUser,
+    user: PermTracesRead,
     db: AsyncSession = Depends(get_db),
 ):
     """Full timeline for a single trace."""
@@ -342,7 +361,7 @@ async def get_trace_detail(
 
 @router.get("/approvals")
 async def list_approvals(
-    user: LeadUp,
+    user: PermApprovalsRead,
     limit: int = Query(50, ge=1, le=200),
     db: AsyncSession = Depends(get_db),
 ):
@@ -390,7 +409,7 @@ async def list_approvals(
 
 @router.get("/policies")
 async def list_policy_events(
-    user: CurrentUser,
+    user: PermPoliciesRead,
     days: int = Query(7, ge=1, le=90),
     decision: Optional[str] = None,
     event_type: Optional[str] = None,
@@ -485,7 +504,7 @@ class PromptRollbackRequest(BaseModel):
 
 @router.get("/agents")
 async def list_agents(
-    user: CurrentUser,
+    user: PermAgentsRead,
     department: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
 ):
@@ -534,7 +553,7 @@ async def list_agents(
 @router.get("/agents/{agent_id}/prompt")
 async def get_agent_prompt(
     agent_id: str,
-    user: CurrentUser,
+    user: PermAgentsPromptRead,
     db: AsyncSession = Depends(get_db),
 ):
     """Get current prompt + version history for an agent."""
@@ -581,7 +600,7 @@ async def get_agent_prompt(
 async def update_agent_prompt(
     agent_id: str,
     body: PromptUpdateRequest,
-    user: ManagerUp,
+    user: PermAgentsPromptEdit,
     db: AsyncSession = Depends(get_db),
 ):
     """Update an agent's system prompt override."""
@@ -624,7 +643,7 @@ async def update_agent_prompt(
 async def rollback_agent_prompt(
     agent_id: str,
     body: PromptRollbackRequest,
-    user: ManagerUp,
+    user: PermAgentsPromptRollback,
     db: AsyncSession = Depends(get_db),
 ):
     """Rollback agent prompt to a specific version."""
@@ -715,7 +734,7 @@ _TIER_MODELS = {
 async def test_agent(
     agent_id: str,
     body: AgentTestRequest,
-    user: LeadUp,
+    user: PermAgentsTest,
     db: AsyncSession = Depends(get_db),
 ):
     """Admin-only: Test an agent with a prompt and return the LLM response.
@@ -886,7 +905,7 @@ async def _get_api_key(provider: str = "google") -> str:
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 @router.get("/settings/llm")
-async def get_llm_settings(user: ManagerUp):
+async def get_llm_settings(user: PermLLMRead):
     """Get current LLM configuration (key is masked)."""
     import os
 
@@ -930,7 +949,7 @@ class LLMSettingsUpdate(BaseModel):
 
 
 @router.put("/settings/llm")
-async def update_llm_settings(body: LLMSettingsUpdate, user: AdminOnly):
+async def update_llm_settings(body: LLMSettingsUpdate, user: PermLLMEdit):
     """Update LLM provider and/or API key. Stored in Redis."""
     try:
         r = await _get_redis()
@@ -960,7 +979,7 @@ async def update_llm_settings(body: LLMSettingsUpdate, user: AdminOnly):
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 @router.post("/agents/sync-prompts")
-async def sync_agent_prompts(user: AdminOnly, db: AsyncSession = Depends(get_db)):
+async def sync_agent_prompts(user: PermAgentsSync, db: AsyncSession = Depends(get_db)):
     """Sync agent defaults from Python classes into the database.
 
     - Creates agents that exist in code but not in DB
@@ -1020,7 +1039,7 @@ async def sync_agent_prompts(user: AdminOnly, db: AsyncSession = Depends(get_db)
 
 @router.get("/users")
 async def list_users(
-    user: ManagerUp,
+    user: PermUsersRead,
     department: str | None = None,
     role: str | None = None,
     db: AsyncSession = Depends(get_db),
@@ -1064,7 +1083,7 @@ async def list_users(
 
 @router.post("/users", status_code=201)
 async def create_user(
-    caller: AdminOnly,
+    caller: PermUsersCreate,
     data: dict,
     db: AsyncSession = Depends(get_db),
 ):
@@ -1140,7 +1159,7 @@ async def create_user(
 
 @router.delete("/users/{user_id}")
 async def deactivate_user(
-    caller: AdminOnly,
+    caller: PermUsersDelete,
     user_id: str,
     db: AsyncSession = Depends(get_db),
 ):
@@ -1173,7 +1192,7 @@ class ApprovalDecisionRequest(BaseModel):
 async def decide_approval(
     trace_id: str,
     body: ApprovalDecisionRequest,
-    user: CurrentUser,
+    user: PermApprovalsDecide,
     db: AsyncSession = Depends(get_db),
 ):
     """Approve or reject a pending approval, recording the user identity."""

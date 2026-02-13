@@ -8,6 +8,7 @@ from app.models.knowledge import KnowledgeDocument
 from app.models.metrics_rollup import MetricsRollupHourly
 from app.models.notification_log import NotificationLog
 from app.models.prompt_history import PromptHistory
+from app.models.soul import SoulTemplate, UserSoul
 from app.models.task import Task
 from app.models.trace_index import TraceIndex
 from app.models.user import User
@@ -25,6 +26,8 @@ __all__ = [
     "PromptHistory",
     "IntegrationCredential",
     "NotificationLog",
+    "SoulTemplate",
+    "UserSoul",
 ]
 
 

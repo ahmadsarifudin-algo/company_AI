@@ -98,8 +98,44 @@ class IntentRouter:
     2. Slow path: LLM classification (when keywords don't match)
     """
 
+    # Departments and their representative agents for LLM-based routing
+    _DEPARTMENT_AGENTS: dict[str, list[str]] = {
+        "finance": [
+            "InvoicingAgent", "TaxAgent", "AccountingAgent",
+            "BudgetPlanningAgent", "ForecastingAgent", "TreasuryAgent", "AuditAgent",
+        ],
+        "hr": [
+            "RecruitmentAgent", "PayrollAgent", "OnboardingAgent",
+            "PerformanceAgent", "BenefitsAgent", "ComplianceAgent", "TrainingAgent",
+        ],
+        "sales": [
+            "LeadScoringAgent", "DealIntelligenceAgent", "PricingAgent",
+            "ContractReviewAgent", "SalesForecastingAgent",
+        ],
+        "tech": [
+            "DevOpsAgent", "QAAgent", "SecurityAgent", "ArchitectAgent",
+            "SREAgent", "BackendEngineerAgent", "FrontendEngineerAgent",
+            "DataEngineerAgent", "TechnicalWriterAgent",
+        ],
+    }
+
+    _CLASSIFICATION_PROMPT = """You are an intent classification engine for a multi-department enterprise.
+Analyze the user message and return a JSON object with these fields:
+- "department": one of "finance", "hr", "sales", "tech"
+- "agent": the most appropriate agent name from the list below
+- "intent": a short snake_case intent label (e.g. "create_invoice", "schedule_interview")
+- "tools_needed": list of tool names that might be needed (can be empty)
+- "priority": one of "low", "normal", "high", "urgent"
+- "confidence": a float 0.0–1.0 indicating your confidence
+
+Available agents by department:
+{agent_list}
+
+Respond ONLY with raw JSON, no markdown, no explanation.
+"""
+
     @classmethod
-    def route(cls, content: str, sender_department: str = "") -> RoutingResult:
+    async def route(cls, content: str, sender_department: str = "") -> RoutingResult:
         """Route a message to the correct department and agent.
 
         Args:
@@ -121,8 +157,12 @@ class IntentRouter:
             )
             return result
 
-        # Phase 2: LLM classification (async — to be implemented)
-        # For now, fallback to sender's department supervisor
+        # Phase 2: LLM classification (async)
+        llm_result = await cls.route_with_llm(content)
+        if llm_result.confidence > 0:
+            return llm_result
+
+        # Phase 3: Fallback to sender's department supervisor
         fallback = RoutingResult(
             department=sender_department or "tech",
             agent=f"{(sender_department or 'tech').capitalize()}Supervisor",
@@ -170,9 +210,102 @@ class IntentRouter:
     async def route_with_llm(cls, content: str) -> RoutingResult:
         """Classify intent using LLM (for complex/ambiguous messages).
 
-        Calls LiteLLM proxy with a classification prompt.
-        Falls back to keyword matching if LLM fails.
+        Calls the configured Gemini or OpenAI provider with a
+        structured classification prompt and parses the JSON response.
+        Falls back gracefully on any error.
         """
-        # TODO: Implement LLM-based classification via LiteLLM
-        # For now, use keyword matching
-        return cls.route(content)
+        import json
+        import os
+
+        import httpx
+
+        # Build agent list for the prompt
+        agent_lines = []
+        for dept, agents in cls._DEPARTMENT_AGENTS.items():
+            agent_lines.append(f"  {dept}: {', '.join(agents)}")
+        agent_list = "\n".join(agent_lines)
+
+        system_prompt = cls._CLASSIFICATION_PROMPT.format(agent_list=agent_list)
+
+        # Determine provider + key (same logic as admin test_agent)
+        provider = os.getenv("LLM_PROVIDER", "google")
+        try:
+            import aioredis
+            r = await aioredis.from_url(os.getenv("REDIS_URL", "redis://localhost:6379"))
+            saved_provider = await r.get("settings:provider")
+            if saved_provider:
+                provider = saved_provider if isinstance(saved_provider, str) else saved_provider.decode()
+            saved_key = await r.get(f"settings:{provider}_api_key")
+            api_key = (saved_key if isinstance(saved_key, str) else saved_key.decode()) if saved_key else None
+            await r.close()
+        except Exception:
+            api_key = None
+
+        if not api_key:
+            api_key = os.getenv("GEMINI_API_KEY") if provider == "google" else os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            logger.warning("intent_llm_no_api_key", provider=provider)
+            return RoutingResult(department="", agent="", confidence=0.0)
+
+        # Build the request
+        try:
+            if provider == "google":
+                url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
+                payload = {
+                    "contents": [{"parts": [{"text": f"{system_prompt}\n\nUser message: {content}"}]}],
+                    "generationConfig": {
+                        "temperature": 0.1,
+                        "maxOutputTokens": 300,
+                        "responseMimeType": "application/json",
+                    },
+                }
+                async with httpx.AsyncClient(timeout=15) as client:
+                    resp = await client.post(url, json=payload)
+                    resp.raise_for_status()
+                    data = resp.json()
+                raw_text = data["candidates"][0]["content"]["parts"][0]["text"]
+            else:
+                # OpenAI-compatible
+                url = "https://api.openai.com/v1/chat/completions"
+                payload = {
+                    "model": "gpt-4o-mini",
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": content},
+                    ],
+                    "temperature": 0.1,
+                    "max_tokens": 300,
+                    "response_format": {"type": "json_object"},
+                }
+                async with httpx.AsyncClient(timeout=15) as client:
+                    resp = await client.post(
+                        url, json=payload,
+                        headers={"Authorization": f"Bearer {api_key}"},
+                    )
+                    resp.raise_for_status()
+                    data = resp.json()
+                raw_text = data["choices"][0]["message"]["content"]
+
+            # Parse the JSON response
+            parsed = json.loads(raw_text)
+            result = RoutingResult(
+                department=parsed.get("department", "tech"),
+                agent=parsed.get("agent", "TechSupervisor"),
+                intent=parsed.get("intent", "classified_task"),
+                tools_needed=parsed.get("tools_needed", []),
+                priority=parsed.get("priority", "normal"),
+                confidence=float(parsed.get("confidence", 0.7)),
+                routing_method="llm",
+            )
+            logger.info(
+                "intent_routed_llm",
+                department=result.department,
+                agent=result.agent,
+                intent=result.intent,
+                confidence=result.confidence,
+            )
+            return result
+
+        except Exception as e:
+            logger.warning("intent_llm_classification_failed", error=str(e))
+            return RoutingResult(department="", agent="", confidence=0.0)

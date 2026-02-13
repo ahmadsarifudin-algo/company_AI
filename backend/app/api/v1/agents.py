@@ -1,11 +1,15 @@
 """Agents router — Agent registry CRUD."""
 
-from fastapi import APIRouter, HTTPException, status
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 
-from app.core.deps import CurrentUser, DbSession
+from app.core.deps import DbSession, require_permission
 from app.models.agent import Agent
 from app.schemas.agent import AgentCreate, AgentResponse, AgentUpdate
+
+PermAgentsEdit = Annotated["User", Depends(require_permission("agents.prompt.edit"))]
 
 router = APIRouter(prefix="/agents", tags=["Agents"])
 
@@ -32,7 +36,7 @@ async def get_agent(agent_id: str, db: DbSession):
 
 
 @router.post("", response_model=AgentResponse, status_code=status.HTTP_201_CREATED)
-async def create_agent(data: AgentCreate, db: DbSession, user: CurrentUser):
+async def create_agent(data: AgentCreate, db: DbSession, user: PermAgentsEdit):
     """Register a new agent (requires auth)."""
     agent = Agent(**data.model_dump())
     db.add(agent)
@@ -42,7 +46,7 @@ async def create_agent(data: AgentCreate, db: DbSession, user: CurrentUser):
 
 
 @router.patch("/{agent_id}", response_model=AgentResponse)
-async def update_agent(agent_id: str, data: AgentUpdate, db: DbSession, user: CurrentUser):
+async def update_agent(agent_id: str, data: AgentUpdate, db: DbSession, user: PermAgentsEdit):
     """Update an agent's configuration (requires auth)."""
     result = await db.execute(select(Agent).where(Agent.id == agent_id))
     agent = result.scalar_one_or_none()

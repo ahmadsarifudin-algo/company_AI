@@ -11,11 +11,13 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
 from uuid import uuid4
+import asyncio
 
 import structlog
 
 from app.services.orchestration.intent_router import IntentRouter, RoutingResult
 from app.services.orchestration.message_gateway import UnifiedMessage
+from app.services.orchestration.task_extractor import TaskExtractor
 from app.services.channels.session_manager import SessionManager
 from app.services.channels.department_guard import DepartmentGuard
 from app.services.channels.soul_resolver import SoulResolver
@@ -46,6 +48,7 @@ class TaskStatus(str, Enum):
     COMPLETED = "completed"
     REJECTED = "rejected"
     FAILED = "failed"
+    CANCELLED = "cancelled"
 
 
 @dataclass
@@ -101,6 +104,39 @@ class TaskOrchestrator:
     """
 
     _tasks: dict[str, OrchestrationTask] = {}
+    _processed_messages: set[str] = set()  # Dedup fallback: channel+msg_id
+    _dedup_lock = asyncio.Lock()  # Prevent asyncio race in dedup check
+
+    @classmethod
+    async def _is_duplicate(cls, msg_key: str) -> bool:
+        """Atomic dedup check: Redis SETNX first, fallback to in-memory set.
+
+        Returns True if this message was already processed (skip it).
+        """
+        # Try Redis SETNX (atomic, survives restarts)
+        try:
+            import redis.asyncio as aioredis
+            from app.core.config import get_settings
+            settings = get_settings()
+            r = aioredis.from_url(settings.REDIS_URL)
+            # SETNX: returns True only if key was SET (first time)
+            was_new = await r.set(f"dedup:{msg_key}", "1", nx=True, ex=300)
+            await r.aclose()
+            if not was_new:
+                return True  # Already processed
+            return False
+        except Exception:
+            pass
+
+        # Fallback: in-memory with lock (no race condition)
+        async with cls._dedup_lock:
+            if msg_key in cls._processed_messages:
+                return True
+            cls._processed_messages.add(msg_key)
+            # Keep set bounded (max 500)
+            if len(cls._processed_messages) > 500:
+                cls._processed_messages = set(list(cls._processed_messages)[-250:])
+            return False
 
     @classmethod
     async def submit(cls, message: UnifiedMessage) -> OrchestrationTask:
@@ -115,15 +151,50 @@ class TaskOrchestrator:
         task_id = f"task_{uuid4().hex[:12]}"
         trace_id = f"trace_{uuid4().hex[:12]}"
 
+        # ── 0. Deduplicate messages (atomic via Redis or Lock) ──
+        raw_msg_id = message.metadata.get("telegram_message_id") or message.metadata.get("message_id") or ""
+        if raw_msg_id:
+            msg_key = f"{message.channel}:{raw_msg_id}:{message.sender}"
+            if await cls._is_duplicate(msg_key):
+                logger.info(
+                    "orchestration_dedup_skip",
+                    msg_key=msg_key,
+                    task_id=task_id,
+                )
+                # Return a dummy cancelled task
+                return OrchestrationTask(
+                    task_id=task_id,
+                    trace_id=trace_id,
+                    message=message,
+                    routing=RoutingResult(agent="none", department="", confidence=0),
+                    status=TaskStatus.CANCELLED,
+                )
+
         # ── 1. Check routing bindings first (OpenClaw pattern) ──
         routing = cls._resolve_binding(message)
 
         # ── 2. Fallback to IntentRouter keyword matching ──
         if routing is None:
-            routing = IntentRouter.route(
+            routing = await IntentRouter.route(
                 content=message.content,
                 sender_department=message.metadata.get("department", ""),
             )
+
+        # ── 2a. Resolve user identity for chat channels ──
+        if message.channel in ("telegram", "whatsapp"):
+            user_record = await cls._resolve_chat_user(message)
+            if user_record:
+                message.metadata["department"] = user_record.department
+                message.metadata["user_name"] = user_record.name
+                message.metadata["user_id"] = user_record.id
+                message.sender_name = user_record.name
+                logger.info(
+                    "user_identity_resolved",
+                    channel=message.channel,
+                    user_name=user_record.name,
+                    department=user_record.department,
+                    sender=message.sender,
+                )
 
         # ── 2b. Department Guard (chat channels only) ──
         user_department = message.metadata.get("department") or None
@@ -161,6 +232,66 @@ class TaskOrchestrator:
 
         cls._tasks[task_id] = task
 
+        # ── 4. Classify message & persist task to DB ──
+        db_task_id = None
+        is_chat_channel = message.channel in ("telegram", "whatsapp")
+        if is_chat_channel:
+            try:
+                # Pass session history for context-aware classification
+                session_messages = session.get_llm_messages()[-6:] if hasattr(session, 'get_llm_messages') else []
+
+                extraction = await TaskExtractor.classify_and_extract(
+                    message_content=message.content,
+                    sender_name=message.sender_name or message.metadata.get("user_name", ""),
+                    department=routing.department or "",
+                    session_history=session_messages,
+                )
+                message_type = extraction.get("type", "task")
+                ready_to_create = extraction.get("ready_to_create", False)
+                needs_clarification = extraction.get("needs_clarification", False)
+
+                # Only persist to DB when task is READY (all info collected + confirmed)
+                if message_type == "task" and ready_to_create and not needs_clarification:
+                    db_task_id = await cls._persist_task(
+                        task_id=task_id,
+                        trace_id=trace_id,
+                        title=extraction.get("title", message.content[:100]),
+                        description=extraction.get("description", message.content),
+                        priority=extraction.get("priority", "P2"),
+                        department=routing.department or "general",
+                        agent=routing.agent,
+                        channel=message.channel,
+                        sender_name=message.sender_name or message.metadata.get("user_name", ""),
+                        sender_identifier=message.sender,
+                        original_message=message.content,
+                        submitted_by=message.metadata.get("user_id"),
+                    )
+                    task.message.metadata["db_task_id"] = db_task_id
+                    logger.info(
+                        "task_persisted_to_db",
+                        task_id=task_id,
+                        db_task_id=db_task_id,
+                        title=extraction.get("title", "")[:50],
+                        message_type=message_type,
+                    )
+                elif message_type == "task" and needs_clarification:
+                    logger.info(
+                        "task_needs_clarification",
+                        task_id=task_id,
+                        message_type=message_type,
+                        content_preview=message.content[:50],
+                    )
+                else:
+                    logger.info(
+                        "message_classified_non_task",
+                        task_id=task_id,
+                        message_type=message_type,
+                        ready_to_create=ready_to_create,
+                        content_preview=message.content[:50],
+                    )
+            except Exception as e:
+                logger.warning("task_extraction_failed", error=str(e), task_id=task_id)
+
         logger.info(
             "orchestration_task_created",
             task_id=task_id,
@@ -175,6 +306,22 @@ class TaskOrchestrator:
 
         # Execute the task (with session context)
         await cls._execute(task, session)
+
+        # ── 5. Update DB task with result after execution ──
+        if db_task_id:
+            try:
+                await cls._update_task_result(
+                    db_task_id=db_task_id,
+                    status="completed" if task.status == TaskStatus.COMPLETED else "failed",
+                    agent_response=task.agent_response,
+                    result_json={
+                        "output": task.agent_response[:2000] if task.agent_response else "",
+                        "agent": task.routing.agent,
+                        "error": task.error if task.error else None,
+                    },
+                )
+            except Exception as e:
+                logger.warning("task_db_update_failed", error=str(e), db_task_id=db_task_id)
 
         return task
 
@@ -201,6 +348,63 @@ class TaskOrchestrator:
                 routing_method="binding",
             )
         return None
+
+    @classmethod
+    async def _resolve_chat_user(cls, message: UnifiedMessage):
+        """Look up user identity from chat channel (Telegram/WhatsApp).
+
+        Queries the users table by telegram_chat_id or phone_whatsapp
+        to identify the sender and retrieve their department.
+
+        Returns:
+            User record if found, None otherwise.
+        """
+        try:
+            from app.core.deps import async_session
+            from sqlalchemy import select
+            from app.models.user import User
+
+            async with async_session() as db:
+                field_map = {
+                    "telegram": User.telegram_chat_id,
+                    "whatsapp": User.phone_whatsapp,
+                }
+                column = field_map.get(message.channel)
+                if column is None:
+                    return None
+
+                result = await db.execute(
+                    select(User).where(
+                        column == message.sender,
+                        User.is_active == True,
+                    )
+                )
+                user = result.scalars().first()
+
+                if user:
+                    logger.info(
+                        "chat_user_resolved",
+                        channel=message.channel,
+                        sender=message.sender,
+                        user_name=user.name,
+                        department=user.department,
+                    )
+                else:
+                    logger.info(
+                        "chat_user_unknown",
+                        channel=message.channel,
+                        sender=message.sender,
+                    )
+                return user
+
+        except Exception as e:
+            logger.warning(
+                "chat_user_resolve_error",
+                error=str(e),
+                channel=message.channel,
+                sender=message.sender,
+            )
+            return None
 
     @classmethod
     async def _execute(cls, task: OrchestrationTask, session=None) -> None:
@@ -353,28 +557,34 @@ class TaskOrchestrator:
             fallback_key = ""
 
             try:
-                import aioredis
+                import redis.asyncio as aioredis
                 redis_url = os.environ.get("REDIS_URL", "redis://redis:6379/0")
                 r = aioredis.from_url(redis_url, decode_responses=True)
                 provider = await r.get("settings:provider") or "google"
                 key_from_redis = await r.get(f"settings:{provider}_api_key")
                 if key_from_redis:
                     api_key = key_from_redis
-                await r.close()
+                await r.aclose()
             except Exception:
                 pass
 
             if not api_key:
+                from app.core.config import get_settings
+                _settings = get_settings()
                 env_map = {"google": "GOOGLE_API_KEY", "openai": "OPENAI_API_KEY"}
-                api_key = os.environ.get(env_map.get(provider, "GOOGLE_API_KEY"), "")
+                api_key = getattr(_settings, env_map.get(provider, "GOOGLE_API_KEY"), "") or os.environ.get(env_map.get(provider, "GOOGLE_API_KEY"), "")
 
             # Prepare fallback provider
             if provider == "google":
                 fallback_provider = "openai"
-                fallback_key = os.environ.get("OPENAI_API_KEY", "")
+                from app.core.config import get_settings
+                _settings = get_settings()
+                fallback_key = _settings.OPENAI_API_KEY or os.environ.get("OPENAI_API_KEY", "")
             else:
                 fallback_provider = "google"
-                fallback_key = os.environ.get("GOOGLE_API_KEY", "")
+                from app.core.config import get_settings
+                _settings = get_settings()
+                fallback_key = _settings.GOOGLE_API_KEY or os.environ.get("GOOGLE_API_KEY", "")
 
             if not api_key:
                 task.agent_response = (
@@ -956,6 +1166,11 @@ class TaskOrchestrator:
         if not reply_text:
             return
 
+        # Prepend task ID notification for chat-originated tasks
+        db_task_id = task.message.metadata.get("db_task_id")
+        if db_task_id and channel in ("telegram", "whatsapp"):
+            reply_text = f"\u2705 Task #{db_task_id[:8]} tercatat.\n\n{reply_text}"
+
         await NotificationDispatcher.send(
             channel=channel,
             recipient=recipient,
@@ -1086,6 +1301,108 @@ class TaskOrchestrator:
     def get_tasks_by_sender(cls, sender: str) -> list[OrchestrationTask]:
         """Get all tasks for a given sender."""
         return [t for t in cls._tasks.values() if t.message.sender == sender]
+
+    # ── DB Persistence Helpers ────────────────────────────────
+
+    @classmethod
+    async def _persist_task(
+        cls,
+        task_id: str,
+        trace_id: str,
+        title: str,
+        description: str,
+        priority: str,
+        department: str,
+        agent: str,
+        channel: str,
+        sender_name: str,
+        sender_identifier: str,
+        original_message: str,
+        submitted_by: str | None = None,
+    ) -> str:
+        """Insert a new Task record into the database.
+
+        Returns the DB task ID.
+        """
+        from app.core.deps import async_session
+        from app.models.task import Task
+        from sqlalchemy import select
+        from app.models.agent import Agent
+
+        async with async_session() as db:
+            # Try to resolve agent ID
+            agent_id = None
+            try:
+                result = await db.execute(
+                    select(Agent.id).where(Agent.name == agent)
+                )
+                row = result.scalar_one_or_none()
+                if row:
+                    agent_id = row
+            except Exception:
+                pass
+
+            db_task = Task(
+                id=task_id,
+                title=title,
+                description=description,
+                priority=priority,
+                department=department,
+                status="running",
+                assigned_agent_id=agent_id,
+                submitted_by=submitted_by,
+                channel=channel,
+                sender_name=sender_name,
+                sender_identifier=sender_identifier,
+                trace_id=trace_id,
+                original_message=original_message,
+            )
+            db.add(db_task)
+            await db.commit()
+
+            logger.info(
+                "task_db_inserted",
+                task_id=task_id,
+                title=title[:50],
+                department=department,
+                channel=channel,
+            )
+            return task_id
+
+    @classmethod
+    async def _update_task_result(
+        cls,
+        db_task_id: str,
+        status: str,
+        agent_response: str,
+        result_json: dict | None = None,
+    ) -> None:
+        """Update an existing Task with execution results."""
+        from app.core.deps import async_session
+        from app.models.task import Task
+        from sqlalchemy import select
+
+        async with async_session() as db:
+            result = await db.execute(
+                select(Task).where(Task.id == db_task_id)
+            )
+            db_task = result.scalar_one_or_none()
+            if not db_task:
+                logger.warning("task_db_update_not_found", db_task_id=db_task_id)
+                return
+
+            db_task.status = status
+            db_task.agent_response = agent_response
+            if result_json:
+                db_task.result_json = result_json
+            await db.commit()
+
+            logger.info(
+                "task_db_updated",
+                db_task_id=db_task_id,
+                status=status,
+                response_len=len(agent_response) if agent_response else 0,
+            )
 
     @classmethod
     def get_pending_approvals(cls) -> list[OrchestrationTask]:

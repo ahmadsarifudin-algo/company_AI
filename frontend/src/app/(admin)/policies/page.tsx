@@ -2,8 +2,14 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { api, PolicyEvent } from '@/lib/api';
+import { useAuth } from '@/lib/auth';
+
+const ROLE_LEVEL: Record<string, number> = { admin: 4, manager: 3, lead: 2, contributor: 1 };
 
 export default function PoliciesPage() {
+    const { user } = useAuth();
+    const roleLevel = ROLE_LEVEL[user?.role || ''] || 0;
+
     const [events, setEvents] = useState<PolicyEvent[]>([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
@@ -23,6 +29,19 @@ export default function PoliciesPage() {
     }, [filters]);
 
     useEffect(() => { load(); }, [load]);
+
+    // Role gate — only lead+ can view policies
+    if (roleLevel < 2) {
+        return (
+            <div className="animate-fade-in" style={{ textAlign: 'center', paddingTop: 80 }}>
+                <div style={{ fontSize: 48, marginBottom: 16 }}>🔒</div>
+                <h2 style={{ fontSize: 20, fontWeight: 700, marginBottom: 8 }}>Access Restricted</h2>
+                <p style={{ color: 'var(--text-secondary)', fontSize: 14 }}>
+                    Policy monitoring requires Lead or higher access.
+                </p>
+            </div>
+        );
+    }
 
     return (
         <div className="animate-fade-in">

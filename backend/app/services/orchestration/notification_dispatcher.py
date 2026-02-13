@@ -86,6 +86,39 @@ class NotificationDispatcher:
             )
             return {"status": "failed", "error": str(e)}
 
+    @staticmethod
+    def _chunk_text(text: str, limit: int = 4000) -> list[str]:
+        """Split long text into chunks at paragraph boundaries.
+
+        Inspired by OpenClaw's text chunking (WA has 4096 char limit,
+        Telegram has 4096 char limit).
+        """
+        if len(text) <= limit:
+            return [text]
+
+        chunks = []
+        while text:
+            if len(text) <= limit:
+                chunks.append(text)
+                break
+
+            # Try to split at paragraph boundary
+            split_pos = text.rfind("\n\n", 0, limit)
+            if split_pos == -1:
+                # Try single newline
+                split_pos = text.rfind("\n", 0, limit)
+            if split_pos == -1:
+                # Try space
+                split_pos = text.rfind(" ", 0, limit)
+            if split_pos == -1:
+                # Hard split
+                split_pos = limit
+
+            chunks.append(text[:split_pos].rstrip())
+            text = text[split_pos:].lstrip()
+
+        return chunks
+
     @classmethod
     async def _send_whatsapp(
         cls,
@@ -94,11 +127,10 @@ class NotificationDispatcher:
         subject: str = "",
         attachments: list[str] | None = None,
     ) -> dict:
-        """Send WhatsApp message via Twilio."""
+        """Send WhatsApp message via Twilio (with text chunking)."""
         if not CredentialVault.is_configured("twilio"):
             return {"status": "skipped", "reason": "Twilio not configured"}
 
-        # Actual Twilio implementation
         account_sid = CredentialVault.get("twilio_account_sid")
         auth_token = CredentialVault.get("twilio_auth_token")
         from_number = CredentialVault.get("twilio_whatsapp_from")
@@ -106,12 +138,19 @@ class NotificationDispatcher:
         try:
             from twilio.rest import Client
             client = Client(account_sid, auth_token)
-            message = client.messages.create(
-                body=content,
-                from_=f"whatsapp:{from_number}",
-                to=f"whatsapp:{recipient}",
-            )
-            return {"status": "sent", "sid": message.sid}
+
+            # Chunk long messages (WA limit: 4096 chars)
+            chunks = cls._chunk_text(content, limit=4000)
+            last_sid = ""
+            for chunk in chunks:
+                message = client.messages.create(
+                    body=chunk,
+                    from_=f"whatsapp:{from_number}",
+                    to=f"whatsapp:{recipient}",
+                )
+                last_sid = message.sid
+
+            return {"status": "sent", "sid": last_sid, "chunks": len(chunks)}
         except ImportError:
             logger.warning("twilio_not_installed")
             return {"status": "skipped", "reason": "twilio package not installed"}
@@ -124,7 +163,7 @@ class NotificationDispatcher:
         subject: str = "",
         attachments: list[str] | None = None,
     ) -> dict:
-        """Send Telegram message via Bot API."""
+        """Send Telegram message via Bot API (with chunking + HTML fallback)."""
         if not CredentialVault.is_configured("telegram"):
             return {"status": "skipped", "reason": "Telegram bot not configured"}
 
@@ -133,22 +172,41 @@ class NotificationDispatcher:
 
         try:
             import httpx
+
+            # Chunk long messages (Telegram limit: 4096 chars)
+            chunks = cls._chunk_text(content, limit=4000)
+            last_message_id = None
+
             async with httpx.AsyncClient(timeout=15) as client:
-                resp = await client.post(
-                    f"{base_url}/sendMessage",
-                    json={
-                        "chat_id": recipient,
-                        "text": content,
-                        "parse_mode": "HTML",
-                    },
-                )
-                data = resp.json()
-                if data.get("ok"):
-                    return {
-                        "status": "sent",
-                        "message_id": data["result"].get("message_id"),
-                    }
-                return {"status": "failed", "error": data.get("description", "Unknown")}
+                for chunk in chunks:
+                    # Try HTML first, fallback to plain text
+                    resp = await client.post(
+                        f"{base_url}/sendMessage",
+                        json={
+                            "chat_id": recipient,
+                            "text": chunk,
+                            "parse_mode": "HTML",
+                        },
+                    )
+                    data = resp.json()
+
+                    # If HTML parsing failed, retry as plain text
+                    if not data.get("ok") and "parse" in data.get("description", "").lower():
+                        resp = await client.post(
+                            f"{base_url}/sendMessage",
+                            json={
+                                "chat_id": recipient,
+                                "text": chunk,
+                            },
+                        )
+                        data = resp.json()
+
+                    if data.get("ok"):
+                        last_message_id = data["result"].get("message_id")
+                    else:
+                        return {"status": "failed", "error": data.get("description", "Unknown")}
+
+            return {"status": "sent", "message_id": last_message_id, "chunks": len(chunks)}
         except ImportError:
             logger.warning("httpx_not_installed")
             return {"status": "skipped", "reason": "httpx package not installed"}

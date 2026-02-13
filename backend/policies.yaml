@@ -1,0 +1,137 @@
+# ═══════════════════════════════════════════════════════════════
+#  ABAC Policy Rules — Company AI Enterprise OS
+#
+#  Evaluated by PolicyEngine in order. First matching rule wins.
+#  Priority: deny > require_approval > allow
+#
+#  Conditions match against PolicyContext fields:
+#    agent_id, department, role, tier, action, resource,
+#    risk_level, data_sensitivity, has_ticket_id, time_of_day
+#
+#  Decisions: deny | deny_if_unmet | require_approval | allow
+# ═══════════════════════════════════════════════════════════════
+
+rules:
+
+  # ── Hard Denials ──────────────────────────────────
+
+  - name: deny_pii_without_ticket
+    description: "PII access requires a linked support ticket"
+    conditions:
+      data_sensitivity: "pii"
+    requirements:
+      has_ticket_id: true
+    decision: deny_if_unmet
+    obligations:
+      log_level: "warning"
+      notify_roles: ["admin", "manager"]
+
+  - name: deny_cross_dept_legal_tools
+    description: "Only legal-department agents may use legal tools"
+    conditions:
+      resource: "tool:legal_review"
+      department: ["tech", "finance", "hr", "sales", "marketing"]
+    decision: deny
+
+  - name: deny_after_hours_external
+    description: "Block external communications after business hours for non-supervisors"
+    conditions:
+      action: "tool_call"
+      resource: ["tool:send_email", "tool:send_whatsapp", "tool:send_telegram"]
+      time_of_day: "after_hours"
+      role: "agent"
+    decision: deny
+
+  - name: deny_nano_tier_high_risk
+    description: "Nano-tier agents cannot perform high-risk actions"
+    conditions:
+      tier: "nano"
+      risk_level: ["high", "critical"]
+    decision: deny
+
+  # ── Approval Required ─────────────────────────────
+
+  - name: approve_critical_risk
+    description: "Critical-risk actions always need human approval"
+    conditions:
+      risk_level: "critical"
+    decision: require_approval
+    obligations:
+      log_level: "error"
+      notify_roles: ["admin", "manager"]
+
+  - name: approve_high_risk_finance
+    description: "High-risk finance actions need dept lead approval"
+    conditions:
+      department: "finance"
+      risk_level: "high"
+    decision: require_approval
+    obligations:
+      log_level: "warning"
+      notify_roles: ["manager"]
+
+  - name: approve_external_comms_high_risk
+    description: "High-risk external communications need approval"
+    conditions:
+      action: "tool_call"
+      resource: ["tool:send_email", "tool:send_whatsapp", "tool:send_telegram"]
+      risk_level: "high"
+    decision: require_approval
+    obligations:
+      notify_roles: ["manager"]
+
+  - name: approve_confidential_data_write
+    description: "Writing confidential data requires approval"
+    conditions:
+      action: "write"
+      data_sensitivity: "confidential"
+    decision: require_approval
+    obligations:
+      require_encryption: true
+      log_level: "warning"
+
+  - name: approve_browser_tool
+    description: "Browser tool usage needs approval (external network access)"
+    conditions:
+      action: "tool_call"
+      resource: "tool:browser_navigate"
+    decision: require_approval
+
+  - name: approve_terminal_tool
+    description: "Terminal commands always need approval"
+    conditions:
+      action: "tool_call"
+      resource: "tool:terminal_execute"
+    decision: require_approval
+    obligations:
+      log_level: "warning"
+      notify_roles: ["admin"]
+
+  # ── Obligations-Only (Allow with conditions) ──────
+
+  - name: mask_pii_fields
+    description: "PII data must be masked in logs and output"
+    conditions:
+      data_sensitivity: "pii"
+    decision: allow
+    obligations:
+      mask_fields: ["ssn", "nik", "ktp", "phone", "email", "address", "salary"]
+      log_level: "info"
+      max_retention_days: 90
+
+  - name: encrypt_confidential_at_rest
+    description: "Confidential data must be encrypted at rest"
+    conditions:
+      data_sensitivity: "confidential"
+    decision: allow
+    obligations:
+      require_encryption: true
+      max_retention_days: 365
+
+  - name: log_all_tool_calls
+    description: "All tool calls should be logged at info level"
+    conditions:
+      action: "tool_call"
+    decision: allow
+    obligations:
+      log_level: "info"

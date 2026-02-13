@@ -15,6 +15,8 @@ from pydantic import BaseModel
 
 import structlog
 
+from app.core.deps import get_db
+from sqlalchemy.ext.asyncio import AsyncSession
 from app.services.orchestration.credential_vault import CredentialVault
 
 logger = structlog.get_logger()
@@ -36,8 +38,12 @@ class TestConnectionRequest(BaseModel):
 
 
 @router.get("/status")
-async def get_integration_status() -> JSONResponse:
+async def get_integration_status(db: AsyncSession = Depends(get_db)) -> JSONResponse:
     """Check which integration services are configured."""
+    # Ensure vault is loaded from DB
+    if not CredentialVault._loaded:
+        await CredentialVault.load(db)
+
     services = ["smtp", "twilio", "telegram", "google", "google_calendar", "google_drive", "google_gmail"]
 
     status = {}
@@ -50,8 +56,11 @@ async def get_integration_status() -> JSONResponse:
 
 
 @router.get("/credentials")
-async def list_credentials() -> JSONResponse:
+async def list_credentials(db: AsyncSession = Depends(get_db)) -> JSONResponse:
     """List all configured credentials (values are masked for secrets)."""
+    # Ensure vault is loaded from DB
+    if not CredentialVault._loaded:
+        await CredentialVault.load(db)
     all_keys = [
         ("smtp_host", "smtp", False),
         ("smtp_port", "smtp", False),
@@ -86,9 +95,35 @@ async def list_credentials() -> JSONResponse:
 
 
 @router.post("/credentials")
-async def set_credential(req: SetCredentialRequest) -> JSONResponse:
-    """Set/update a credential value."""
-    await CredentialVault.set(req.key, req.value)
+async def set_credential(req: SetCredentialRequest, db: AsyncSession = Depends(get_db)) -> JSONResponse:
+    """Set/update a credential value. Persisted to DB."""
+    # Update in-memory cache
+    CredentialVault._cache[req.key] = req.value
+
+    # Persist to DB via ORM
+    from sqlalchemy import select
+    from app.models.integration_credential import IntegrationCredential
+
+    result = await db.execute(
+        select(IntegrationCredential).where(IntegrationCredential.key == req.key)
+    )
+    existing = result.scalar_one_or_none()
+
+    if existing:
+        existing.value = req.value
+        existing.service = req.service
+        existing.is_secret = req.is_secret
+    else:
+        cred = IntegrationCredential(
+            key=req.key,
+            value=req.value,
+            service=req.service,
+            is_secret=req.is_secret,
+            is_active=True,
+        )
+        db.add(cred)
+
+    await db.commit()
 
     logger.info(
         "credential_set",

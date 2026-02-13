@@ -281,10 +281,18 @@ class PolicyEngine:
 # ── Singleton ─────────────────────────────────────
 _policy_engine: PolicyEngine | None = None
 
+# Default path: backend/policies.yaml (2 levels up from this file)
+_DEFAULT_RULES_PATH = Path(__file__).resolve().parent.parent.parent / "policies.yaml"
+
 
 def get_policy_engine(rules_path: str | Path | None = None) -> PolicyEngine:
-    """Get the singleton PolicyEngine instance."""
+    """Get the singleton PolicyEngine instance.
+
+    Auto-loads policies.yaml from the backend root if no path specified.
+    """
     global _policy_engine
     if _policy_engine is None:
-        _policy_engine = PolicyEngine(rules_path)
+        effective_path = rules_path or _DEFAULT_RULES_PATH
+        _policy_engine = PolicyEngine(effective_path)
     return _policy_engine
+

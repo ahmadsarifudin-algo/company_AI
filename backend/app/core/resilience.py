@@ -235,10 +235,51 @@ class DLQEntry:
 class DeadLetterQueue:
     """Storage for failed operations after retry exhaustion.
 
-    In-memory implementation; production would use Redis list or DB table.
+    Redis-backed with in-memory fallback when Redis is unavailable.
+    Keys: dlq:{dlq_id} → JSON-serialized DLQEntry (TTL 7 days).
     """
 
-    _entries: dict[str, DLQEntry] = {}
+    _DLQ_TTL = 604800  # 7 days
+    _fallback: dict[str, DLQEntry] = {}
+
+    @classmethod
+    def _redis(cls):
+        """Lazy Redis connection (same pattern as ApprovalGate)."""
+        try:
+            from app.core.config import get_settings
+            import redis
+            s = get_settings()
+            return redis.Redis.from_url(s.REDIS_URL, decode_responses=True)
+        except Exception:
+            return None
+
+    @classmethod
+    def _entry_to_dict(cls, entry: DLQEntry) -> dict:
+        return {
+            "dlq_id": entry.dlq_id,
+            "trace_id": entry.trace_id,
+            "step_id": entry.step_id,
+            "error_type": entry.error_type,
+            "error_message": entry.error_message,
+            "error_category": entry.error_category,
+            "payload": entry.payload,
+            "created_at": entry.created_at,
+            "replayed": entry.replayed,
+        }
+
+    @classmethod
+    def _dict_to_entry(cls, d: dict) -> DLQEntry:
+        return DLQEntry(
+            dlq_id=d["dlq_id"],
+            trace_id=d["trace_id"],
+            step_id=d["step_id"],
+            error_type=d["error_type"],
+            error_message=d["error_message"],
+            error_category=d["error_category"],
+            payload=d.get("payload", {}),
+            created_at=float(d.get("created_at", 0)),
+            replayed=d.get("replayed", False) in (True, "true", "True"),
+        )
 
     @classmethod
     async def push(
@@ -259,6 +300,8 @@ class DeadLetterQueue:
         Returns:
             The DLQ entry.
         """
+        import json
+
         dlq_id = f"dlq_{uuid4().hex[:12]}"
         category = classify_error(error)
 
@@ -272,8 +315,6 @@ class DeadLetterQueue:
             payload=payload or {},
         )
 
-        cls._entries[dlq_id] = entry
-
         logger.warning(
             "dlq_push",
             dlq_id=dlq_id,
@@ -282,6 +323,24 @@ class DeadLetterQueue:
             error_type=type(error).__name__,
         )
 
+        # Try Redis first
+        r = cls._redis()
+        if r:
+            try:
+                r.setex(
+                    f"dlq:{dlq_id}",
+                    cls._DLQ_TTL,
+                    json.dumps(cls._entry_to_dict(entry)),
+                )
+                # Also maintain a set for trace lookups
+                r.sadd(f"dlq:trace:{trace_id}", dlq_id)
+                r.expire(f"dlq:trace:{trace_id}", cls._DLQ_TTL)
+                return entry
+            except Exception as e:
+                logger.warning("dlq_redis_push_failed", error=str(e)[:100])
+
+        # Fallback to in-memory
+        cls._fallback[dlq_id] = entry
         return entry
 
     @classmethod
@@ -292,9 +351,6 @@ class DeadLetterQueue:
     ) -> Any:
         """Replay a DLQ entry with its original handler.
 
-        Uses the same idempotency_key as the original call to prevent
-        duplicate side effects.
-
         Args:
             dlq_id: DLQ entry to replay.
             handler: Original async handler to re-execute.
@@ -302,8 +358,25 @@ class DeadLetterQueue:
         Returns:
             Result of the handler.
         """
-        entry = cls._entries.get(dlq_id)
-        if not entry:
+        import json
+
+        r = cls._redis()
+        entry: DLQEntry | None = None
+
+        # Try Redis
+        if r:
+            try:
+                raw = r.get(f"dlq:{dlq_id}")
+                if raw:
+                    entry = cls._dict_to_entry(json.loads(raw))
+            except Exception:
+                pass
+
+        # Fallback to in-memory
+        if entry is None:
+            entry = cls._fallback.get(dlq_id)
+
+        if entry is None:
             raise ValueError(f"DLQ entry {dlq_id} not found")
 
         logger.info("dlq_replay", dlq_id=dlq_id, trace_id=entry.trace_id)
@@ -312,22 +385,87 @@ class DeadLetterQueue:
         entry.replayed = True
         entry.replay_result = result
 
+        # Update in Redis
+        if r:
+            try:
+                data = cls._entry_to_dict(entry)
+                data["replayed"] = True
+                r.setex(f"dlq:{dlq_id}", cls._DLQ_TTL, json.dumps(data))
+            except Exception:
+                pass
+
+        # Update in fallback
+        if dlq_id in cls._fallback:
+            cls._fallback[dlq_id] = entry
+
         return result
 
     @classmethod
     def get_pending(cls) -> list[DLQEntry]:
         """Get all un-replayed DLQ entries."""
-        return [e for e in cls._entries.values() if not e.replayed]
+        import json
+
+        entries: list[DLQEntry] = []
+
+        r = cls._redis()
+        if r:
+            try:
+                cursor = 0
+                while True:
+                    cursor, keys = r.scan(cursor, match="dlq:dlq_*", count=100)
+                    for key in keys:
+                        raw = r.get(key)
+                        if raw:
+                            e = cls._dict_to_entry(json.loads(raw))
+                            if not e.replayed:
+                                entries.append(e)
+                    if cursor == 0:
+                        break
+                return entries
+            except Exception:
+                pass
+
+        # Fallback
+        return [e for e in cls._fallback.values() if not e.replayed]
 
     @classmethod
     def get_by_trace(cls, trace_id: str) -> list[DLQEntry]:
         """Get DLQ entries for a specific trace."""
-        return [e for e in cls._entries.values() if e.trace_id == trace_id]
+        import json
+
+        entries: list[DLQEntry] = []
+
+        r = cls._redis()
+        if r:
+            try:
+                dlq_ids = r.smembers(f"dlq:trace:{trace_id}")
+                for dlq_id in dlq_ids:
+                    raw = r.get(f"dlq:{dlq_id}")
+                    if raw:
+                        entries.append(cls._dict_to_entry(json.loads(raw)))
+                return entries
+            except Exception:
+                pass
+
+        # Fallback
+        return [e for e in cls._fallback.values() if e.trace_id == trace_id]
 
     @classmethod
     def clear(cls) -> None:
         """Clear all DLQ entries. For testing only."""
-        cls._entries.clear()
+        cls._fallback.clear()
+        r = cls._redis()
+        if r:
+            try:
+                cursor = 0
+                while True:
+                    cursor, keys = r.scan(cursor, match="dlq:*", count=100)
+                    if keys:
+                        r.delete(*keys)
+                    if cursor == 0:
+                        break
+            except Exception:
+                pass
 
 
 # ── Circuit Breaker ───────────────────────────────

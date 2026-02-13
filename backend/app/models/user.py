@@ -2,7 +2,7 @@
 
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, DateTime, String
+from sqlalchemy import Boolean, DateTime, ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin, generate_uuid
@@ -31,9 +31,20 @@ class User(Base, TimestampMixin):
         String(20), nullable=True,
         comment="WhatsApp number e.g. +6281234567890",
     )
+    telegram_chat_id: Mapped[str | None] = mapped_column(
+        String(64), nullable=True,
+        comment="Telegram chat ID or @username",
+    )
     notification_channels: Mapped[str] = mapped_column(
-        String(50), nullable=False, server_default="email",
-        comment="Comma-separated: email,whatsapp",
+        String(100), nullable=False, server_default="email",
+        comment="Comma-separated: email,whatsapp,telegram",
+    )
+
+    # ── SOUL personality ─────────────────────────
+    active_soul_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("user_souls.id", ondelete="SET NULL", use_alter=True),
+        nullable=True,
+        comment="Active SOUL personality for chat responses",
     )
 
     # ── Helpers ──────────────────────────────────

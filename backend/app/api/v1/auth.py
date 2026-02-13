@@ -1,4 +1,4 @@
-"""Auth router — Login, registration, invite, and set-password endpoints."""
+"""Auth router — Login, registration, invite, set-password, and session endpoints."""
 
 import hashlib
 from datetime import datetime, timedelta, timezone
@@ -7,7 +7,7 @@ from uuid import uuid4
 from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
 
-from app.core.deps import DbSession
+from app.core.deps import CurrentUser, DbSession
 from app.core.security import create_access_token, hash_password, verify_password
 from app.models.user import User
 from app.schemas.auth import (
@@ -156,3 +156,12 @@ async def set_password(data: SetPasswordRequest, db: DbSession):
         access_token=token,
         user=UserResponse.model_validate(user),
     )
+
+
+# ── Session Validation ─────────────────────
+
+@router.get("/me", response_model=UserResponse)
+async def me(user: CurrentUser):
+    """Return the current authenticated user. Used by frontend to validate sessions."""
+    return UserResponse.model_validate(user)
+

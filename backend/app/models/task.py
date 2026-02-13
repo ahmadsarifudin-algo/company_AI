@@ -26,5 +26,15 @@ class Task(Base, TimestampMixin):
         String(36), ForeignKey("users.id"), nullable=True
     )
 
+    # ── Chat-originated task fields ──────────
+    channel: Mapped[str | None] = mapped_column(
+        String(20), nullable=True, index=True
+    )  # telegram, whatsapp, email, dashboard
+    sender_name: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    sender_identifier: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    agent_response: Mapped[str | None] = mapped_column(Text, nullable=True)
+    trace_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+    original_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     def __repr__(self) -> str:
         return f"<Task {self.title[:30]} ({self.status})>"

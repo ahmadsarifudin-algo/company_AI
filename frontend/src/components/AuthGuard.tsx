@@ -1,14 +1,27 @@
 'use client';
 
+/**
+ * AuthGuard — DISABLED for development.
+ * To re-enable login, uncomment the original logic below.
+ */
+export default function AuthGuard({
+    children,
+    minRole,
+}: {
+    children: React.ReactNode;
+    minRole?: 'admin' | 'manager' | 'lead' | 'contributor';
+}) {
+    // Auth disabled — render children directly
+    return <>{children}</>;
+}
+
+/*
+// ── ORIGINAL AUTH GUARD (uncomment to re-enable login) ──
+
 import { useAuth } from '@/lib/auth';
 import { useRouter } from 'next/navigation';
 import { useEffect } from 'react';
 
-/**
- * AuthGuard — Wraps admin pages to require authentication.
- * Redirects to /login if not authenticated.
- * Optionally checks minimum role level.
- */
 export default function AuthGuard({
     children,
     minRole,
@@ -55,7 +68,6 @@ export default function AuthGuard({
 
     if (!isAuthenticated) return null;
 
-    // Role check
     if (minRole && user) {
         const userLevel = ROLE_HIERARCHY[user.role] || 0;
         const requiredLevel = ROLE_HIERARCHY[minRole] || 0;
@@ -79,3 +91,5 @@ export default function AuthGuard({
 
     return <>{children}</>;
 }
+*/
+

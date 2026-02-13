@@ -10,8 +10,10 @@ before agent execution. Uses LangGraph StateGraph with MemorySaver
 checkpointer for persistence and human-in-the-loop approval flows.
 """
 
+import os
 from typing import Any, Literal
 
+import httpx
 import structlog
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langgraph.checkpoint.memory import MemorySaver
@@ -22,14 +24,16 @@ from app.agents.state import AgentState
 logger = structlog.get_logger()
 
 # Valid departments matching the enterprise structure
+# Synced with actual agent departments in the database
 DEPARTMENTS = [
-    "development",
+    "tech",
     "finance",
     "hr",
     "sales",
-    "marketing",
+    "marketing_digital",
     "legal",
     "business_dev",
+    "development",  # legacy alias
 ]
 
 
@@ -124,11 +128,12 @@ def retrieve_context(state: AgentState) -> AgentState:
     return state
 
 
-def agent_executor_node(state: AgentState) -> AgentState:
-    """Agent execution node: placeholder for actual agent processing.
+async def agent_executor_node(state: AgentState) -> AgentState:
+    """Agent execution node: calls LLM to process the task (with tools).
 
-    In the full flow, the AgentExecutorService injects the real agent's
-    `process()` method here. This node is replaced at runtime.
+    Uses the agent's system prompt (from DB, injected via state) and the
+    task description to generate an actual AI response via Google/OpenAI.
+    Supports tool calling via ToolBroker for agents that have tools available.
     """
     logger.info(
         "agent_executor_node",
@@ -136,16 +141,244 @@ def agent_executor_node(state: AgentState) -> AgentState:
         status=state["status"],
     )
 
-    # Default behavior: mark as needing actual agent implementation
-    if state["status"] == "running":
+    if state["status"] != "running":
+        return state
+
+    task_description = state.get("current_task", "")
+    agent_name = state.get("agent_name", "AI Assistant")
+    department = state.get("department", "general")
+    agent_id = state.get("agent_id", "")
+
+    # Build system prompt — prefer DB system prompt, fallback to generic
+    db_prompt = state.get("system_prompt", "")
+    if db_prompt:
+        system_prompt = db_prompt
+    else:
+        system_prompt = (
+            f"You are {agent_name}, an AI assistant in the {department} department. "
+            f"You help with tasks related to {department}. "
+            f"Provide detailed, actionable responses in the same language as the task. "
+            f"If the task is in Indonesian, respond in Indonesian."
+        )
+
+    # Collect context from prior messages (RAG context etc.)
+    context_parts: list[str] = []
+    for msg in state.get("messages", []):
+        if hasattr(msg, "content") and isinstance(msg, SystemMessage):
+            context_parts.append(msg.content)
+    if context_parts:
+        system_prompt += "\n\nAdditional context:\n" + "\n".join(context_parts)
+
+    # Get available tools from ToolBroker
+    tools_for_llm: list[dict] = []
+    broker = None
+    agent_ctx = None
+    try:
+        from app.core.tool_broker import get_tool_broker
+        from app.core.llm_client import AgentContext
+
+        broker = get_tool_broker()
+        agent_ctx = AgentContext(
+            agent_id=agent_id,
+            agent_name=agent_name,
+            department=department,
+            tier=state.get("agent_tier", "standard"),
+            role="agent",
+            task_id=state.get("task_id", ""),
+        )
+        tools_for_llm = broker.get_available_tools(role="agent", department=department)
+        if tools_for_llm:
+            logger.info("tools_loaded", agent=agent_name, count=len(tools_for_llm))
+    except Exception as e:
+        logger.warning("tools_load_failed", error=str(e))
+
+    # Call LLM (with tool-call loop)
+    try:
+        response_text = await _call_llm_with_tools(
+            system_prompt, task_description, tools_for_llm, broker, agent_ctx, state,
+        )
         state["messages"] = [
-            AIMessage(
-                content=f"[AgentExecutor] Agent '{state.get('agent_name')}' processing complete."
-            )
+            AIMessage(content=response_text)
         ]
+        state["result"] = {
+            "output": response_text,
+            "agent": agent_name,
+            "department": department,
+            "tool_calls": state.get("tool_call_count", 0),
+        }
         state["status"] = "completed"
+        logger.info(
+            "agent_executor_completed",
+            agent=agent_name,
+            response_len=len(response_text),
+            tool_calls=state.get("tool_call_count", 0),
+        )
+    except Exception as e:
+        logger.error("agent_executor_llm_failed", error=str(e))
+        state["status"] = "failed"
+        state["errors"] = state.get("errors", []) + [f"LLM call failed: {str(e)}"]
+        state["result"] = {"error": str(e)}
+        state["messages"] = [
+            AIMessage(content=f"[AgentExecutor] Failed: {str(e)}")
+        ]
 
     return state
+
+
+async def _call_llm(system_prompt: str, user_content: str) -> str:
+    """Call Google Gemini or OpenAI to generate a response.
+
+    Tries Google first, falls back to OpenAI.
+    """
+    google_key = os.environ.get("GOOGLE_API_KEY", "")
+    openai_key = os.environ.get("OPENAI_API_KEY", "")
+
+    if google_key:
+        return await _call_google(google_key, system_prompt, user_content)
+    elif openai_key:
+        return await _call_openai(openai_key, system_prompt, user_content)
+    else:
+        raise RuntimeError("No LLM API key configured (GOOGLE_API_KEY or OPENAI_API_KEY)")
+
+
+async def _call_llm_with_tools(
+    system_prompt: str,
+    user_content: str,
+    tools: list[dict],
+    broker: "Any | None",
+    agent_ctx: "Any | None",
+    state: AgentState,
+    max_iterations: int = 5,
+) -> str:
+    """Call LLM with tool-calling support.
+
+    If tools are provided and Google API is available, uses Gemini function calling.
+    Otherwise falls back to plain _call_llm.
+    """
+    from typing import Any as _Any
+
+    google_key = os.environ.get("GOOGLE_API_KEY", "")
+
+    # No tools or no broker or no Google key → plain call
+    if not tools or not broker or not agent_ctx or not google_key:
+        return await _call_llm(system_prompt, user_content)
+
+    # Convert OpenAI-format tools to Gemini function declarations
+    gemini_tools = []
+    for t in tools:
+        fn = t.get("function", {})
+        params = fn.get("parameters", {"type": "object", "properties": {}})
+        gemini_tools.append({
+            "name": fn.get("name", ""),
+            "description": fn.get("description", ""),
+            "parameters": params,
+        })
+
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={google_key}"
+
+    # Build conversation history for the loop
+    contents: list[dict] = [
+        {"role": "user", "parts": [{"text": user_content}]}
+    ]
+
+    for iteration in range(max_iterations):
+        payload: dict[str, _Any] = {
+            "system_instruction": {"parts": [{"text": system_prompt}]},
+            "contents": contents,
+            "generationConfig": {"temperature": 0.7, "maxOutputTokens": 4096},
+            "tools": [{"functionDeclarations": gemini_tools}],
+        }
+
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            resp = await client.post(url, json=payload)
+            resp.raise_for_status()
+            data = resp.json()
+
+        candidate = data["candidates"][0]["content"]
+        parts = candidate.get("parts", [])
+
+        # Check if the response contains function calls
+        function_calls = [p for p in parts if "functionCall" in p]
+
+        if not function_calls:
+            # Pure text response — extract and return
+            text_parts = [p.get("text", "") for p in parts if "text" in p]
+            return "\n".join(text_parts) or "(no response)"
+
+        # Process function calls
+        # Add model's response to conversation history
+        contents.append({"role": "model", "parts": parts})
+
+        # Execute each function call via ToolBroker
+        function_responses: list[dict] = []
+        for fc_part in function_calls:
+            fc = fc_part["functionCall"]
+            tool_name = fc.get("name", "")
+            tool_args = fc.get("args", {})
+
+            logger.info("tool_call_executing", tool=tool_name, args=tool_args, iteration=iteration)
+            state["tool_call_count"] = state.get("tool_call_count", 0) + 1
+
+            try:
+                result = await broker.execute(agent_ctx, tool_name, tool_args)
+                output = str(result.output) if result.output else "(no output)"
+                function_responses.append({
+                    "functionResponse": {
+                        "name": tool_name,
+                        "response": {"result": output},
+                    }
+                })
+                logger.info("tool_call_success", tool=tool_name, output_len=len(output))
+            except Exception as tool_err:
+                error_msg = f"Tool error: {str(tool_err)}"
+                function_responses.append({
+                    "functionResponse": {
+                        "name": tool_name,
+                        "response": {"error": error_msg},
+                    }
+                })
+                logger.warning("tool_call_failed", tool=tool_name, error=str(tool_err))
+
+        # Add tool responses to conversation and loop back
+        contents.append({"role": "user", "parts": function_responses})
+
+    # Max iterations reached — return last available text
+    return "(max tool iterations reached, no final response)"
+
+
+async def _call_google(api_key: str, system_prompt: str, user_content: str) -> str:
+    """Call Google Gemini API."""
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
+    payload = {
+        "system_instruction": {"parts": [{"text": system_prompt}]},
+        "contents": [{"role": "user", "parts": [{"text": user_content}]}],
+        "generationConfig": {"temperature": 0.7, "maxOutputTokens": 4096},
+    }
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        resp = await client.post(url, json=payload)
+        resp.raise_for_status()
+        data = resp.json()
+        return data["candidates"][0]["content"]["parts"][0]["text"]
+
+
+async def _call_openai(api_key: str, system_prompt: str, user_content: str) -> str:
+    """Call OpenAI API."""
+    url = "https://api.openai.com/v1/chat/completions"
+    payload = {
+        "model": "gpt-4o-mini",
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_content},
+        ],
+        "temperature": 0.7,
+        "max_tokens": 4096,
+    }
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        resp = await client.post(url, json=payload, headers=headers)
+        resp.raise_for_status()
+        data = resp.json()
+        return data["choices"][0]["message"]["content"]
 
 
 def check_approval(state: AgentState) -> AgentState:
@@ -290,6 +523,7 @@ def create_default_state(
     agent_id: str = "",
     agent_name: str = "",
     agent_tier: str = "standard",
+    system_prompt: str = "",
     max_tool_calls: int = 50,
     max_tokens: int = 100_000,
 ) -> AgentState:
@@ -323,6 +557,7 @@ def create_default_state(
         max_tool_calls=max_tool_calls,
         max_tokens=max_tokens,
         human_feedback=None,
+        system_prompt=system_prompt,
         status="pending",
         result=None,
     )
